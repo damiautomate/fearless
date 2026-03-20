@@ -5,8 +5,7 @@ import { useTheme } from "@/lib/theme-context";
 import { useRouter } from "next/navigation";
 import { saveDiagnostic, saveDayProgress, addXp, updateStreak, saveJournalEntry, saveCoachMessage, getCoachMessages, getDayProgress } from "@/lib/firestore";
 import { getDayContent, PROFILES, getXpForNextLevel } from "@/lib/content";
-import { IconFlame, IconZap, IconCheck, IconSend, IconChevron, IconSun, IconMoon, IconLogout, IconTarget, IconShield, typeIconMap, typeColorMap } from "@/components/icons";
-
+import { IconFlame, IconZap, IconCheck, IconSend, IconChevron, IconSun, IconMoon, IconLogout, IconTarget, IconShield, IconChart, IconUser, typeIconMap, typeColorMap } from "@/components/icons";
 // ─── Shared UI ───
 function AnimIn({ children, delay = 0, style = {} }) {
   const [v, setV] = useState(false);
@@ -639,7 +638,6 @@ const TAB_ICONS = {
 };
 
 // Using imported icons for nav
-import { IconChart as NavChart, IconUser as NavUser } from "@/components/icons";
 
 export default function DashboardPage() {
   const { user, profile, loading, refreshProfile } = useAuth();
@@ -670,8 +668,8 @@ export default function DashboardPage() {
   const navIcons = {
     today: <IconTarget size={20} />,
     coach: <IconTarget size={20} />,
-    progress: <NavChart size={20} />,
-    settings: <NavUser size={20} />,
+    progress: <IconChart size={20} />,
+    settings: <IconUser size={20} />,
   };
 
   return (
