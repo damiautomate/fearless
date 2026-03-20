@@ -13,12 +13,13 @@ function AnimIn({ children, delay = 0, style = {} }) {
   return <div style={{ opacity: v ? 1 : 0, transform: v ? "translateY(0)" : "translateY(12px)", transition: "all 0.45s cubic-bezier(0.4,0,0.2,1)", ...style }}>{children}</div>;
 }
 
-function Card({ children, style = {}, hover = false }) {
+function Card({ children, style = {}, hover = false, onClick }) {
   return (
-    <div style={{
+    <div onClick={onClick} style={{
       borderRadius: "14px", padding: "18px",
       background: "var(--bg-card)", border: "1px solid var(--border)",
       boxShadow: "var(--shadow)", transition: "all 0.2s ease",
+      cursor: onClick ? "pointer" : undefined,
       ...style,
     }}>
       {children}
@@ -143,6 +144,61 @@ function DiagnosticFlow({ user, onComplete }) {
   );
 }
 
+
+// ═══════════════════════════════════
+//  PRESCRIPTION CARD (separate component)
+// ═══════════════════════════════════
+function PrescriptionCard({ rx, delay, onComplete }) {
+  const [open, setOpen] = useState(false);
+  const [done, setDone] = useState(false);
+  const TypeIcon = typeIconMap[rx.type] || IconZap;
+
+  const [learnedText, setLt] = useState("");
+  const [learnedSaved, setLs] = useState(false);
+  const [showLearned, setSlr] = useState(false);
+
+  const handleComplete = () => {
+    if (done) return;
+    setDone(true);
+    onComplete(rx.xp);
+  };
+
+  return (
+    <AnimIn delay={delay}>
+      <Card style={{ marginBottom: "8px", opacity: done ? 0.55 : 1, borderColor: done ? "var(--green)" : undefined, padding: "0", overflow: "hidden" }}>
+        <div onClick={() => setOpen(!open)} style={{ padding: "14px 16px", cursor: "pointer", display: "flex", gap: "12px", alignItems: "flex-start" }}>
+          <div style={{ width: "36px", height: "36px", borderRadius: "10px", flexShrink: 0, background: `color-mix(in srgb, ${typeColorMap[rx.type] || "var(--accent)"} 10%, transparent)`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <TypeIcon size={16} color={typeColorMap[rx.type] || "var(--accent)"} />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", gap: "6px", marginBottom: "3px", flexWrap: "wrap", alignItems: "center" }}>
+              <Badge text={rx.label} color={typeColorMap[rx.type] || "var(--accent)"} />
+              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "var(--text-muted)" }}>{rx.time}</span>
+            </div>
+            <p style={{ fontSize: "14px", fontWeight: 600, color: done ? "var(--text-tertiary)" : "var(--text-primary)", textDecoration: done ? "line-through" : "none", lineHeight: 1.35 }}>{rx.title}</p>
+            <p style={{ fontFamily: "'Newsreader', serif", fontSize: "12px", color: "var(--text-tertiary)", marginTop: "2px" }}>{rx.source} · {rx.duration}</p>
+          </div>
+          <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "var(--accent-text)", opacity: 0.6, flexShrink: 0 }}>+{rx.xp}</span>
+        </div>
+        {open && <div style={{ padding: "0 16px 14px", marginLeft: "48px" }}>
+          <div style={{ padding: "10px 12px", borderRadius: "8px", background: "var(--bg-secondary)", border: "1px solid var(--border)", marginBottom: "10px" }}>
+            <Label text="Prescription" color={typeColorMap[rx.type] || "var(--accent)"} style={{ marginBottom: "4px" }} />
+            <p style={{ fontFamily: "'Newsreader', serif", fontSize: "13px", color: "var(--text-secondary)", lineHeight: 1.6 }}>{rx.dosage}</p>
+          </div>
+          <div style={{ display: "flex", gap: "8px" }}>
+            {rx.url && rx.url !== "#" && <a href={rx.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: "12px", fontWeight: 600, padding: "8px 16px", borderRadius: "8px", background: "var(--accent)", color: "#fff", textDecoration: "none" }}>Open</a>}
+            {!done && <button onClick={(e) => { e.stopPropagation(); handleComplete(); }} style={{ fontSize: "12px", fontWeight: 600, padding: "8px 16px", borderRadius: "8px", border: "1.5px solid var(--green)", background: "var(--green-soft)", color: "var(--green)", cursor: "pointer" }}>
+              <span style={{ display: "flex", alignItems: "center", gap: "4px" }}><IconCheck size={14} /> Done</span>
+            </button>}
+            {done && <span style={{ fontSize: "12px", color: "var(--green)", fontWeight: 600, display: "flex", alignItems: "center", gap: "4px" }}><IconCheck size={14} /> Completed</span>}
+          </div>
+        </div>}
+      </Card>
+    </AnimIn>
+  );
+}
+
+
 // ═══════════════════════════════════
 //  TODAY TAB
 // ═══════════════════════════════════
@@ -207,6 +263,28 @@ function TodayTab({ profile, refreshProfile }) {
             </Card>
           </div>
         </div>
+
+        {/* What I Learned */}
+      <AnimIn delay={500}>
+        <Card style={{ marginBottom: "14px", borderColor: learnedSaved ? "var(--green)" : undefined }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--teal)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+            <Label text="What I Learned Today" color="var(--teal)" style={{ marginBottom: 0 }} />
+          </div>
+          <p style={{ fontFamily: "'Newsreader', serif", fontSize: "14px", color: "var(--text-secondary)", lineHeight: 1.55, marginBottom: "12px" }}>
+            Write down the key insight or moment that resonated with you from today's content.
+          </p>
+          {!learnedSaved && !showLearned && <button onClick={() => setSlr(true)} style={{ fontSize: "12px", fontWeight: 600, padding: "8px 18px", borderRadius: "8px", border: "1.5px solid var(--teal)", background: "var(--teal-soft)", color: "var(--teal)", cursor: "pointer" }}>Write Notes</button>}
+          {showLearned && !learnedSaved && <div>
+            <textarea value={learnedText} onChange={e => setLt(e.target.value)} placeholder="What stood out? What surprised you? What do you want to remember?" rows={4} style={{ ...inputStyle, borderColor: "var(--teal)" }} />
+            <button onClick={async () => { if (learnedText.trim()) { setLs(true); setSlr(false); await saveJournalEntry(user.uid, day, learnedText, "What I Learned — Day " + day); await earnXp(10); }}} disabled={!learnedText.trim()} style={{ fontSize: "12px", fontWeight: 600, padding: "8px 18px", borderRadius: "8px", border: "none", cursor: "pointer", marginTop: "8px", background: learnedText.trim() ? "var(--teal)" : "var(--border)", color: learnedText.trim() ? "#fff" : "var(--text-muted)" }}>Save Notes</button>
+          </div>}
+          {learnedSaved && <p style={{ fontFamily: "'Newsreader', serif", fontSize: "13px", color: "var(--teal)", fontStyle: "italic" }}>Notes saved. +10 XP</p>}
+        </Card>
+      </AnimIn>
+
+
+        
       </AnimIn>
 
       {/* Phase tracker */}
@@ -249,43 +327,9 @@ function TodayTab({ profile, refreshProfile }) {
         </div>
       </AnimIn>
 
-      {content.prescriptions?.map((rx, i) => {
-        const done = completed[i];
-        const [open, setOpen] = useState(false);
-        const TypeIcon = typeIconMap[rx.type] || IconZap;
-        return (
-          <AnimIn key={i} delay={220 + i * 40}>
-            <Card style={{ marginBottom: "8px", opacity: done ? 0.55 : 1, borderColor: done ? "var(--green)" : undefined, padding: "0", overflow: "hidden" }}>
-              <div onClick={() => setOpen(!open)} style={{ padding: "14px 16px", cursor: "pointer", display: "flex", gap: "12px", alignItems: "flex-start" }}>
-                <div style={{ width: "36px", height: "36px", borderRadius: "10px", flexShrink: 0, background: `color-mix(in srgb, ${typeColorMap[rx.type] || "var(--accent)"} 10%, transparent)`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <TypeIcon size={16} color={typeColorMap[rx.type] || "var(--accent)"} />
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: "flex", gap: "6px", marginBottom: "3px", flexWrap: "wrap", alignItems: "center" }}>
-                    <Badge text={rx.label} color={typeColorMap[rx.type] || "var(--accent)"} />
-                    <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "var(--text-muted)" }}>{rx.time}</span>
-                  </div>
-                  <p style={{ fontSize: "14px", fontWeight: 600, color: done ? "var(--text-tertiary)" : "var(--text-primary)", textDecoration: done ? "line-through" : "none", lineHeight: 1.35 }}>{rx.title}</p>
-                  <p style={{ fontFamily: "'Newsreader', serif", fontSize: "12px", color: "var(--text-tertiary)", marginTop: "2px" }}>{rx.source} · {rx.duration}</p>
-                </div>
-                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "var(--accent-text)", opacity: 0.6, flexShrink: 0 }}>+{rx.xp}</span>
-              </div>
-              {open && <div style={{ padding: "0 16px 14px", marginLeft: "48px" }}>
-                <div style={{ padding: "10px 12px", borderRadius: "8px", background: "var(--bg-secondary)", border: "1px solid var(--border)", marginBottom: "10px" }}>
-                  <Label text="Prescription" color={typeColorMap[rx.type] || "var(--accent)"} style={{ marginBottom: "4px" }} />
-                  <p style={{ fontFamily: "'Newsreader', serif", fontSize: "13px", color: "var(--text-secondary)", lineHeight: 1.6 }}>{rx.dosage}</p>
-                </div>
-                <div style={{ display: "flex", gap: "8px" }}>
-                  {rx.url && rx.url !== "#" && <a href={rx.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: "12px", fontWeight: 600, padding: "8px 16px", borderRadius: "8px", background: "var(--accent)", color: "#fff", textDecoration: "none" }}>Open</a>}
-                  {!done && <button onClick={(e) => { e.stopPropagation(); setCompleted(p => ({...p, [i]: true})); earnXp(rx.xp); }} style={{ fontSize: "12px", fontWeight: 600, padding: "8px 16px", borderRadius: "8px", border: "1.5px solid var(--green)", background: "var(--green-soft)", color: "var(--green)", cursor: "pointer" }}>
-                    <span style={{ display: "flex", alignItems: "center", gap: "4px" }}><IconCheck size={14} /> Done</span>
-                  </button>}
-                </div>
-              </div>}
-            </Card>
-          </AnimIn>
-        );
-      })}
+      {content.prescriptions?.map((rx, i) => (
+        <PrescriptionCard key={`${day}-${i}`} rx={rx} delay={220 + i * 40} onComplete={earnXp} />
+      ))}
 
       {/* Challenge */}
       {content.challenge && <AnimIn delay={380}>
