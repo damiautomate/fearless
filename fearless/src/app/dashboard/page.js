@@ -216,6 +216,13 @@ function TodayTab({ profile, refreshProfile }) {
   const [reportText, setRt] = useState("");
   const [journalText, setJtx] = useState("");
   const [xpToast, setXt] = useState(null);
+
+  const [learnedText, setLt] = useState("");
+  const [learnedSaved, setLs] = useState(false);
+  const [showLearned, setSlr] = useState(false);
+
+
+  
   const pct = Math.min(((profile.xp || 0) / getXpForNextLevel(profile.level || 1)) * 100, 100);
 
   const earnXp = async (amount) => {
