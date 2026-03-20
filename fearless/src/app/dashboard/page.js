@@ -199,6 +199,41 @@ function PrescriptionCard({ rx, delay, onComplete }) {
 }
 
 
+function getGreeting(name, day, streak) {
+  const hour = new Date().getHours();
+  const timeGreet = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+
+  const greetings = [
+    `${timeGreet}, ${name}`,
+    `You showed up again, ${name}`,
+    `${name}, let's make today count`,
+    `Ready for Day ${day}?`,
+    `${name}, your future self will thank you`,
+    `The brave version of you is here, ${name}`,
+    `${timeGreet} — Day ${day} awaits`,
+    `${name}, consistency is your superpower`,
+    `Still here, still growing, ${name}`,
+    `${name}, courage looks like this`,
+  ];
+
+  // Streak-specific
+  if (streak >= 14) return `${name}, ${streak} days straight. Unstoppable.`;
+  if (streak >= 7) return `${streak}-day streak, ${name}. You're on fire.`;
+  if (streak === 0) return `Welcome back, ${name}. Today is a fresh start.`;
+
+  // Day-specific
+  if (day === 1) return `Welcome, ${name}. Your transformation starts now.`;
+  if (day === 7) return `One week down, ${name}. Most people quit by now.`;
+  if (day === 14) return `Phase 1 complete, ${name}. You're not the same person.`;
+  if (day === 30) return `One month, ${name}. Let that sink in.`;
+  if (day === 42) return `${name}, you just finished Phase 2. The old you wouldn't believe this.`;
+  if (day === 84) return `Day 84, ${name}. You did it. You actually did it.`;
+
+  // Rotate through general greetings based on day number
+  return greetings[day % greetings.length];
+}
+
+
 // ═══════════════════════════════════
 //  TODAY TAB
 // ═══════════════════════════════════
@@ -251,8 +286,12 @@ function TodayTab({ profile, refreshProfile }) {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "24px", gap: "12px", flexWrap: "wrap" }}>
           <div>
             <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "11px", color: "var(--text-muted)", letterSpacing: "1px", marginBottom: "4px" }}>DAY {day} OF 84</p>
-            <h1 style={{ fontSize: "clamp(20px,5vw,26px)", fontWeight: 800, color: "var(--text-primary)", letterSpacing: "-0.3px" }}>Welcome back, {profile.name}</h1>
-            <Badge text={p.title} color={p.color} style={{ marginTop: "6px", display: "inline-block" }} />
+
+        <h1 style={{ fontSize: "clamp(20px,5vw,26px)", fontWeight: 800, color: "var(--text-primary)", letterSpacing: "-0.3px" }}>{getGreeting(profile.name, profile.currentDay, profile.streak)}</h1>
+
+        
+        
+        <Badge text={p.title} color={p.color} style={{ marginTop: "6px", display: "inline-block" }} />
           </div>
           <div style={{ display: "flex", gap: "8px" }}>
             <Card style={{ padding: "10px 14px", display: "flex", alignItems: "center", gap: "6px" }}>
