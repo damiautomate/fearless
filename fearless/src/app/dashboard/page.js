@@ -1,20 +1,24 @@
 "use client";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { useTheme } from "@/lib/theme-context";
 import { useRouter } from "next/navigation";
-import { saveDiagnostic, saveDayProgress, addXp, updateStreak, saveJournalEntry, saveCoachMessage, getCoachMessages, getDayProgress } from "@/lib/firestore";
+import { saveDiagnostic, addXp, saveJournalEntry, saveCoachMessage, getCoachMessages, getDayProgress, saveDayProgress } from "@/lib/firestore";
 import { getDayContent, PROFILES, getXpForNextLevel } from "@/lib/content";
+import { calculateCurrentDay, getPhaseFromDay } from "@/lib/day-tracker";
 import { getProactiveMessage } from "@/lib/proactive-coach";
-import { IconFlame, IconZap, IconCheck, IconSend, IconChevron, IconSun, IconMoon, IconLogout, IconTarget, IconShield, IconChart, IconUser, typeIconMap, typeColorMap } from "@/components/icons";
-// ─── Shared UI ───
+import { IconFlame, IconZap, IconCheck, IconSend, IconChevron, IconSun, IconMoon, IconLogout, IconTarget, IconShield, IconChart, IconUser, IconPen, IconBook, typeIconMap, typeColorMap } from "@/components/icons";
+
+// ═══════════════════════════════════
+//  SHARED UI COMPONENTS
+// ═══════════════════════════════════
 function AnimIn({ children, delay = 0, style = {} }) {
   const [v, setV] = useState(false);
   useEffect(() => { const t = setTimeout(() => setV(true), delay); return () => clearTimeout(t); }, [delay]);
   return <div style={{ opacity: v ? 1 : 0, transform: v ? "translateY(0)" : "translateY(12px)", transition: "all 0.45s cubic-bezier(0.4,0,0.2,1)", ...style }}>{children}</div>;
 }
 
-function Card({ children, style = {}, hover = false, onClick }) {
+function Card({ children, style = {}, onClick }) {
   return (
     <div onClick={onClick} style={{
       borderRadius: "14px", padding: "18px",
@@ -36,8 +40,44 @@ function Badge({ text, color, style = {} }) {
   return <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", letterSpacing: "0.5px", padding: "3px 8px", borderRadius: "6px", background: `color-mix(in srgb, ${color} 12%, transparent)`, color, fontWeight: 500, ...style }}>{text}</span>;
 }
 
+const inputStyle = {
+  width: "100%", fontFamily: "'Newsreader', serif", fontSize: "14px",
+  padding: "12px 14px", borderRadius: "10px", border: "1.5px solid var(--border)",
+  background: "var(--bg-secondary)", color: "var(--text-primary)", resize: "none", outline: "none",
+  boxSizing: "border-box", lineHeight: 1.6, transition: "border 0.2s",
+};
+
 // ═══════════════════════════════════
-//  DIAGNOSTIC
+//  GREETING SYSTEM
+// ═══════════════════════════════════
+function getGreeting(name, day, streak) {
+  const hour = new Date().getHours();
+  const timeGreet = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+  const greetings = [
+    `${timeGreet}, ${name}`,
+    `You showed up again, ${name}`,
+    `${name}, let's make today count`,
+    `Ready for Day ${day}?`,
+    `${name}, your future self will thank you`,
+    `The brave version of you is here, ${name}`,
+    `${timeGreet} — Day ${day} awaits`,
+    `${name}, consistency is your superpower`,
+    `Still here, still growing, ${name}`,
+    `${name}, courage looks like this`,
+  ];
+  if (streak >= 14) return `${name}, ${streak} days straight. Unstoppable.`;
+  if (streak >= 7) return `${streak}-day streak, ${name}. You're on fire.`;
+  if (streak === 0 && day > 1) return `Welcome back, ${name}. Today is a fresh start.`;
+  if (day === 1) return `Welcome, ${name}. Your transformation starts now.`;
+  if (day === 7) return `One week down, ${name}. Most people quit by now.`;
+  if (day === 14) return `Phase 1 complete, ${name}. You're not the same person.`;
+  if (day === 30) return `One month, ${name}. Let that sink in.`;
+  if (day === 84) return `Day 84, ${name}. You did it.`;
+  return greetings[day % greetings.length];
+}
+
+// ═══════════════════════════════════
+//  DIAGNOSTIC ASSESSMENT
 // ═══════════════════════════════════
 const QUESTIONS = [
   { id: "trigger", text: "When you walk into a room full of people you don't know, what happens inside you?", type: "choice", options: [
@@ -80,19 +120,16 @@ function DiagnosticFlow({ user, onComplete }) {
   useEffect(() => { setVisible(false); setSelected(null); setScaleVal(2); setTimeout(() => setVisible(true), 80); }, [qi]);
 
   const handleAnswer = async (value) => {
-    const newAnswers = { ...answers, [qi]: value };
-    setAnswers(newAnswers);
+    const na = { ...answers, [qi]: value };
+    setAnswers(na);
     if (qi < QUESTIONS.length - 1) { setQi(qi + 1); return; }
     const counts = {};
-    Object.entries(newAnswers).forEach(([idx, val]) => {
-      if (QUESTIONS[Number(idx)].type === "choice") counts[val] = (counts[val] || 0) + 1;
-    });
-    const profileKeys = Object.keys(PROFILES);
-    const profileCounts = {};
-    profileKeys.forEach(k => { if (counts[k]) profileCounts[k] = counts[k]; });
-    const dominant = Object.entries(profileCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "timidity";
-    await saveDiagnostic(user.uid, newAnswers, dominant);
-    onComplete(dominant);
+    Object.entries(na).forEach(([idx, val]) => { if (QUESTIONS[Number(idx)].type === "choice") counts[val] = (counts[val] || 0) + 1; });
+    const pk = Object.keys(PROFILES);
+    const pc = {}; pk.forEach(k => { if (counts[k]) pc[k] = counts[k]; });
+    const dom = Object.entries(pc).sort((a, b) => b[1] - a[1])[0]?.[0] || "timidity";
+    await saveDiagnostic(user.uid, na, dom);
+    onComplete(dom);
   };
 
   if (stage === "welcome") {
@@ -106,9 +143,7 @@ function DiagnosticFlow({ user, onComplete }) {
         <p style={{ fontFamily: "'Newsreader', serif", fontSize: "clamp(16px,2.5vw,19px)", color: "var(--text-secondary)", maxWidth: "460px", lineHeight: 1.7, marginBottom: "40px" }}>
           The next few minutes will be the most honest conversation you've had with yourself in a long time. There are no wrong answers — only real ones.
         </p>
-        <button onClick={() => setStage("questions")} style={{ fontSize: "15px", fontWeight: 600, padding: "14px 40px", borderRadius: "12px", border: "none", cursor: "pointer", background: "var(--accent)", color: "#fff", boxShadow: "0 2px 12px rgba(99,102,241,0.3)", transition: "0.2s" }}>
-          I'm Ready to Begin
-        </button>
+        <button onClick={() => setStage("questions")} style={{ fontSize: "15px", fontWeight: 600, padding: "14px 40px", borderRadius: "12px", border: "none", cursor: "pointer", background: "var(--accent)", color: "#fff", boxShadow: "0 2px 12px rgba(99,102,241,0.3)" }}>I'm Ready to Begin</button>
         <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "11px", color: "var(--text-muted)", marginTop: "20px" }}>6 questions · ~3 minutes</p>
       </div>
     );
@@ -119,7 +154,6 @@ function DiagnosticFlow({ user, onComplete }) {
     <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "40px 24px", maxWidth: "520px", margin: "0 auto", opacity: visible ? 1 : 0, transform: visible ? "translateY(0)" : "translateY(16px)", transition: "0.45s" }}>
       <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "11px", color: "var(--text-muted)", marginBottom: "16px" }}>{qi + 1} / {QUESTIONS.length}</p>
       <h2 style={{ fontSize: "clamp(20px,4vw,26px)", fontWeight: 700, color: "var(--text-primary)", textAlign: "center", lineHeight: 1.4, marginBottom: "32px" }}>{q.text}</h2>
-
       {q.type === "choice" && <div style={{ display: "flex", flexDirection: "column", gap: "8px", width: "100%" }}>
         {q.options.map((opt, i) => (
           <button key={i} onClick={() => { setSelected(i); setTimeout(() => handleAnswer(opt.value), 350); }} style={{
@@ -128,16 +162,13 @@ function DiagnosticFlow({ user, onComplete }) {
             background: selected === i ? "var(--accent-soft)" : "var(--bg-card)",
             color: selected === i ? "var(--accent-text)" : "var(--text-secondary)",
             cursor: "pointer", textAlign: "left", transition: "all 0.2s ease", fontWeight: selected === i ? 600 : 400,
-          }}>
-            {opt.text}
-          </button>
+          }}>{opt.text}</button>
         ))}
       </div>}
-
       {q.type === "scale" && <div style={{ width: "100%", maxWidth: "440px" }}>
         <input type="range" min="0" max="4" value={scaleVal} onChange={e => setScaleVal(Number(e.target.value))} style={{ width: "100%", height: "6px", borderRadius: "3px", background: `linear-gradient(90deg, var(--accent) ${scaleVal*25}%, var(--border) ${scaleVal*25}%)` }} />
         <div style={{ display: "flex", justifyContent: "space-between", marginTop: "12px" }}>
-          {q.labels.map((l, i) => <span key={i} style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: scaleVal === i ? "var(--text-primary)" : "var(--text-muted)", fontWeight: scaleVal === i ? 600 : 400, textAlign: "center", maxWidth: "60px", transition: "0.2s" }}>{l}</span>)}
+          {q.labels.map((l, i) => <span key={i} style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: scaleVal === i ? "var(--text-primary)" : "var(--text-muted)", fontWeight: scaleVal === i ? 600 : 400, textAlign: "center", maxWidth: "60px" }}>{l}</span>)}
         </div>
         <button onClick={() => handleAnswer(scaleVal)} style={{ fontSize: "14px", fontWeight: 600, padding: "12px 36px", borderRadius: "12px", border: "none", cursor: "pointer", background: "var(--accent)", color: "#fff", display: "block", margin: "28px auto 0" }}>Continue</button>
       </div>}
@@ -145,24 +176,12 @@ function DiagnosticFlow({ user, onComplete }) {
   );
 }
 
-
 // ═══════════════════════════════════
-//  PRESCRIPTION CARD (separate component)
+//  PRESCRIPTION CARD (own component)
 // ═══════════════════════════════════
-function PrescriptionCard({ rx, delay, onComplete }) {
+function PrescriptionCard({ rx, delay, done, onComplete }) {
   const [open, setOpen] = useState(false);
-  const [done, setDone] = useState(false);
   const TypeIcon = typeIconMap[rx.type] || IconZap;
-
-  const [learnedText, setLt] = useState("");
-  const [learnedSaved, setLs] = useState(false);
-  const [showLearned, setSlr] = useState(false);
-
-  const handleComplete = () => {
-    if (done) return;
-    setDone(true);
-    onComplete(rx.xp);
-  };
 
   return (
     <AnimIn delay={delay}>
@@ -188,7 +207,7 @@ function PrescriptionCard({ rx, delay, onComplete }) {
           </div>
           <div style={{ display: "flex", gap: "8px" }}>
             {rx.url && rx.url !== "#" && <a href={rx.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: "12px", fontWeight: 600, padding: "8px 16px", borderRadius: "8px", background: "var(--accent)", color: "#fff", textDecoration: "none" }}>Open</a>}
-            {!done && <button onClick={(e) => { e.stopPropagation(); handleComplete(); }} style={{ fontSize: "12px", fontWeight: 600, padding: "8px 16px", borderRadius: "8px", border: "1.5px solid var(--green)", background: "var(--green-soft)", color: "var(--green)", cursor: "pointer" }}>
+            {!done && <button onClick={(e) => { e.stopPropagation(); onComplete(); }} style={{ fontSize: "12px", fontWeight: 600, padding: "8px 16px", borderRadius: "8px", border: "1.5px solid var(--green)", background: "var(--green-soft)", color: "var(--green)", cursor: "pointer" }}>
               <span style={{ display: "flex", alignItems: "center", gap: "4px" }}><IconCheck size={14} /> Done</span>
             </button>}
             {done && <span style={{ fontSize: "12px", color: "var(--green)", fontWeight: 600, display: "flex", alignItems: "center", gap: "4px" }}><IconCheck size={14} /> Completed</span>}
@@ -199,42 +218,19 @@ function PrescriptionCard({ rx, delay, onComplete }) {
   );
 }
 
-
-function getGreeting(name, day, streak) {
-  const hour = new Date().getHours();
-  const timeGreet = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
-  const greetings = [
-    `${timeGreet}, ${name}`,
-    `You showed up again, ${name}`,
-    `${name}, let's make today count`,
-    `Ready for Day ${day}?`,
-    `${name}, your future self will thank you`,
-    `The brave version of you is here, ${name}`,
-    `${timeGreet} — Day ${day} awaits`,
-    `${name}, consistency is your superpower`,
-    `Still here, still growing, ${name}`,
-    `${name}, courage looks like this`,
-  ];
-  if (streak >= 14) return `${name}, ${streak} days straight. Unstoppable.`;
-  if (streak >= 7) return `${streak}-day streak, ${name}. You're on fire.`;
-  if (streak === 0 && day > 1) return `Welcome back, ${name}. Today is a fresh start.`;
-  if (day === 1) return `Welcome, ${name}. Your transformation starts now.`;
-  if (day === 7) return `One week down, ${name}. Most people quit by now.`;
-  if (day === 14) return `Phase 1 complete, ${name}. You're not the same person.`;
-  if (day === 30) return `One month, ${name}. Let that sink in.`;
-  if (day === 84) return `Day 84, ${name}. You did it.`;
-  return greetings[day % greetings.length];
-}
-
 // ═══════════════════════════════════
 //  TODAY TAB
 // ═══════════════════════════════════
 function TodayTab({ profile, refreshProfile }) {
   const { user } = useAuth();
-  const day = profile.currentDay || 1;
+  const day = profile.startDate ? calculateCurrentDay(profile.startDate) : (profile.currentDay || 1);
+  const phase = getPhaseFromDay(day);
   const content = getDayContent(profile.profile, day);
   const p = PROFILES[profile.profile] || PROFILES.timidity;
-  const [completed, setCompleted] = useState({});
+  const pct = Math.min(((profile.xp || 0) / getXpForNextLevel(profile.level || 1)) * 100, 100);
+
+  // ─── Persistent completion state ───
+  const [completedItems, setCompletedItems] = useState({});
   const [challengeDone, setCd] = useState(false);
   const [journalDone, setJd] = useState(false);
   const [coachOpen, setCo] = useState(false);
@@ -243,14 +239,43 @@ function TodayTab({ profile, refreshProfile }) {
   const [reportText, setRt] = useState("");
   const [journalText, setJtx] = useState("");
   const [xpToast, setXt] = useState(null);
-
   const [learnedText, setLt] = useState("");
   const [learnedSaved, setLs] = useState(false);
   const [showLearned, setSlr] = useState(false);
+  const [loaded, setLoaded] = useState(false);
 
+  // Load saved progress for this day from Firestore
+  useEffect(() => {
+    async function loadProgress() {
+      try {
+        const saved = await getDayProgress(user.uid, day);
+        if (saved) {
+          const ci = {};
+          (saved.completedItems || []).forEach(i => { ci[i] = true; });
+          setCompletedItems(ci);
+          setCd(saved.challengeDone || false);
+          setJd(saved.journalDone || false);
+          setLs(saved.notesSaved || false);
+        }
+      } catch (e) { console.log("No saved progress for day", day); }
+      setLoaded(true);
+    }
+    if (user) loadProgress();
+  }, [user, day]);
 
-  
-  const pct = Math.min(((profile.xp || 0) / getXpForNextLevel(profile.level || 1)) * 100, 100);
+  // Save progress to Firestore whenever it changes
+  const saveProgress = async (updates) => {
+    try {
+      const current = {
+        completedItems: Object.keys(completedItems).map(Number),
+        challengeDone,
+        journalDone,
+        notesSaved: learnedSaved,
+        ...updates,
+      };
+      await saveDayProgress(user.uid, day, current);
+    } catch (e) { console.log("Failed to save progress", e); }
+  };
 
   const earnXp = async (amount) => {
     setXt(amount);
@@ -259,20 +284,25 @@ function TodayTab({ profile, refreshProfile }) {
     refreshProfile();
   };
 
-  const inputStyle = {
-    width: "100%", fontFamily: "'Newsreader', serif", fontSize: "14px",
-    padding: "12px 14px", borderRadius: "10px", border: "1.5px solid var(--border)",
-    background: "var(--bg-secondary)", color: "var(--text-primary)", resize: "none", outline: "none",
-    boxSizing: "border-box", lineHeight: 1.6, transition: "border 0.2s",
+  const handleComplete = async (index, xp) => {
+    if (completedItems[index]) return; // Already done
+    const newCompleted = { ...completedItems, [index]: true };
+    setCompletedItems(newCompleted);
+    await earnXp(xp);
+    await saveProgress({ completedItems: Object.keys(newCompleted).map(Number) });
   };
 
-  if (!content) return <p style={{ color: "var(--text-tertiary)", textAlign: "center", padding: "40px" }}>Loading...</p>;
+  const completedCount = Object.keys(completedItems).length;
+
+  if (!content || !loaded) return <p style={{ color: "var(--text-tertiary)", textAlign: "center", padding: "40px" }}>Loading...</p>;
 
   return (
     <div>
       {/* XP Toast */}
+      {xpToast && <div style={{ position: "fixed", bottom: 88, left: "50%", transform: "translateX(-50%)", zIndex: 200, padding: "10px 24px", borderRadius: "10px", background: "var(--accent)", fontSize: "13px", fontWeight: 700, color: "#fff", boxShadow: "var(--shadow-lg)", animation: "fadeSlideIn 0.3s ease" }}>+{xpToast} XP earned</div>}
 
-    {(() => {
+      {/* Proactive Coach Banner */}
+      {(() => {
         const msg = getProactiveMessage(profile);
         if (!msg) return null;
         return (
@@ -290,20 +320,13 @@ function TodayTab({ profile, refreshProfile }) {
         );
       })()}
 
-    
-      {xpToast && <div style={{ position: "fixed", bottom: 88, left: "50%", transform: "translateX(-50%)", zIndex: 200, padding: "10px 24px", borderRadius: "10px", background: "var(--accent)", fontSize: "13px", fontWeight: 700, color: "#fff", boxShadow: "var(--shadow-lg)", animation: "fadeSlideIn 0.3s ease" }}>+{xpToast} XP earned</div>}
-
       {/* Header */}
       <AnimIn delay={60}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "24px", gap: "12px", flexWrap: "wrap" }}>
           <div>
             <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "11px", color: "var(--text-muted)", letterSpacing: "1px", marginBottom: "4px" }}>DAY {day} OF 84</p>
-
-        <h1 style={{ fontSize: "clamp(20px,5vw,26px)", fontWeight: 800, color: "var(--text-primary)", letterSpacing: "-0.3px" }}>{getGreeting(profile.name, profile.currentDay, profile.streak)}</h1>
-
-        
-        
-        <Badge text={p.title} color={p.color} style={{ marginTop: "6px", display: "inline-block" }} />
+            <h1 style={{ fontSize: "clamp(20px,5vw,26px)", fontWeight: 800, color: "var(--text-primary)", letterSpacing: "-0.3px" }}>{getGreeting(profile.name, day, profile.streak)}</h1>
+            <Badge text={p.title} color={p.color} style={{ marginTop: "6px", display: "inline-block" }} />
           </div>
           <div style={{ display: "flex", gap: "8px" }}>
             <Card style={{ padding: "10px 14px", display: "flex", alignItems: "center", gap: "6px" }}>
@@ -315,34 +338,10 @@ function TodayTab({ profile, refreshProfile }) {
                 <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "9px", color: "var(--text-muted)" }}>LVL {profile.level || 1}</span>
                 <span style={{ fontSize: "12px", fontWeight: 700, color: "var(--accent-text)" }}>{profile.xp || 0}</span>
               </div>
-              <div style={{ width: "100%", height: "3px", borderRadius: "2px", background: "var(--border)" }}>
-                <div style={{ width: `${pct}%`, height: "100%", borderRadius: "2px", background: "var(--accent)", transition: "width 0.5s" }} />
-              </div>
+              <div style={{ width: "100%", height: "3px", borderRadius: "2px", background: "var(--border)" }}><div style={{ width: `${pct}%`, height: "100%", borderRadius: "2px", background: "var(--accent)", transition: "width 0.5s" }} /></div>
             </Card>
           </div>
         </div>
-
-        {/* What I Learned */}
-      <AnimIn delay={500}>
-        <Card style={{ marginBottom: "14px", borderColor: learnedSaved ? "var(--green)" : undefined }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--teal)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
-            <Label text="What I Learned Today" color="var(--teal)" style={{ marginBottom: 0 }} />
-          </div>
-          <p style={{ fontFamily: "'Newsreader', serif", fontSize: "14px", color: "var(--text-secondary)", lineHeight: 1.55, marginBottom: "12px" }}>
-            Write down the key insight or moment that resonated with you from today's content.
-          </p>
-          {!learnedSaved && !showLearned && <button onClick={() => setSlr(true)} style={{ fontSize: "12px", fontWeight: 600, padding: "8px 18px", borderRadius: "8px", border: "1.5px solid var(--teal)", background: "var(--teal-soft)", color: "var(--teal)", cursor: "pointer" }}>Write Notes</button>}
-          {showLearned && !learnedSaved && <div>
-            <textarea value={learnedText} onChange={e => setLt(e.target.value)} placeholder="What stood out? What surprised you? What do you want to remember?" rows={4} style={{ ...inputStyle, borderColor: "var(--teal)" }} />
-            <button onClick={async () => { if (learnedText.trim()) { setLs(true); setSlr(false); await saveJournalEntry(user.uid, day, learnedText, "What I Learned — Day " + day); await earnXp(10); }}} disabled={!learnedText.trim()} style={{ fontSize: "12px", fontWeight: 600, padding: "8px 18px", borderRadius: "8px", border: "none", cursor: "pointer", marginTop: "8px", background: learnedText.trim() ? "var(--teal)" : "var(--border)", color: learnedText.trim() ? "#fff" : "var(--text-muted)" }}>Save Notes</button>
-          </div>}
-          {learnedSaved && <p style={{ fontFamily: "'Newsreader', serif", fontSize: "13px", color: "var(--teal)", fontStyle: "italic" }}>Notes saved. +10 XP</p>}
-        </Card>
-      </AnimIn>
-
-
-        
       </AnimIn>
 
       {/* Phase tracker */}
@@ -350,9 +349,9 @@ function TodayTab({ profile, refreshProfile }) {
         <Card style={{ marginBottom: "14px", padding: "14px 16px" }}>
           <div style={{ display: "flex", gap: "4px" }}>
             {[{ n: "Awareness", c: "var(--accent)" }, { n: "Rewiring", c: "var(--teal)" }, { n: "Proving", c: "var(--orange)" }, { n: "Identity", c: "var(--red)" }].map((ph, i) => {
-              const active = i === (profile.phase || 1) - 1, past = i < (profile.phase || 1) - 1;
+              const active = i === phase - 1, past = i < phase - 1;
               return <div key={i} style={{ flex: 1, textAlign: "center" }}>
-                <div style={{ width: "100%", height: "3px", borderRadius: "2px", marginBottom: "6px", background: past ? ph.c : active ? `linear-gradient(90deg, ${ph.c} 60%, var(--border) 60%)` : "var(--border)", transition: "0.3s" }} />
+                <div style={{ width: "100%", height: "3px", borderRadius: "2px", marginBottom: "6px", background: past ? ph.c : active ? `linear-gradient(90deg, ${ph.c} 60%, var(--border) 60%)` : "var(--border)" }} />
                 <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "9px", color: active ? ph.c : past ? "var(--text-secondary)" : "var(--text-muted)", fontWeight: active ? 600 : 400 }}>{ph.n}</span>
               </div>;
             })}
@@ -362,7 +361,7 @@ function TodayTab({ profile, refreshProfile }) {
 
       {/* Coach Note */}
       {content.coach && <AnimIn delay={140}>
-        <Card onClick={() => setCo(!coachOpen)} style={{ marginBottom: "14px", cursor: "pointer", borderColor: coachOpen ? "var(--accent)" : undefined }}>
+        <Card onClick={() => setCo(!coachOpen)} style={{ marginBottom: "14px", borderColor: coachOpen ? "var(--accent)" : undefined }}>
           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
             <div style={{ width: "32px", height: "32px", borderRadius: "10px", background: "var(--accent-soft)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
               <IconTarget size={16} color="var(--accent)" />
@@ -381,34 +380,30 @@ function TodayTab({ profile, refreshProfile }) {
       <AnimIn delay={180}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "10px" }}>
           <h2 style={{ fontSize: "16px", fontWeight: 700, color: "var(--text-primary)" }}>Today's Prescriptions</h2>
-          <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "var(--text-muted)" }}>{content.prescriptions?.length || 0} items</p>
+          <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "var(--text-muted)" }}>{completedCount}/{content.prescriptions?.length || 0} done</p>
         </div>
       </AnimIn>
 
       {content.prescriptions?.map((rx, i) => (
-        <PrescriptionCard key={`${day}-${i}`} rx={rx} delay={220 + i * 40} onComplete={earnXp} />
+        <PrescriptionCard key={`${day}-${i}`} rx={rx} delay={220 + i * 40} done={!!completedItems[i]} onComplete={() => handleComplete(i, rx.xp)} />
       ))}
 
       {/* Challenge */}
       {content.challenge && <AnimIn delay={380}>
-        <Card style={{ marginTop: "8px", marginBottom: "14px", borderColor: challengeDone ? "var(--green)" : "var(--orange)", borderWidth: challengeDone ? "1px" : "1.5px" }}>
+        <Card style={{ marginTop: "8px", marginBottom: "14px", borderColor: challengeDone ? "var(--green)" : "var(--orange)", borderWidth: "1.5px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <IconZap size={16} color="var(--orange)" />
-              <Label text="Today's Mission" color="var(--orange)" style={{ marginBottom: 0 }} />
-            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}><IconZap size={16} color="var(--orange)" /><Label text="Today's Mission" color="var(--orange)" style={{ marginBottom: 0 }} /></div>
             <Badge text={content.challenge.difficulty} color={content.challenge.difficulty === "Easy" ? "var(--green)" : content.challenge.difficulty === "Medium" ? "var(--orange)" : "var(--red)"} />
           </div>
           <h3 style={{ fontSize: "16px", fontWeight: 700, color: challengeDone ? "var(--text-tertiary)" : "var(--text-primary)", marginBottom: "8px" }}>{challengeDone ? "✓ " : ""}{content.challenge.title}</h3>
           <p style={{ fontFamily: "'Newsreader', serif", fontSize: "14px", color: "var(--text-secondary)", lineHeight: 1.6, marginBottom: "10px" }}>{content.challenge.desc}</p>
           <div style={{ padding: "8px 10px", borderRadius: "8px", background: "var(--bg-secondary)", marginBottom: "12px" }}>
-            <Label text="Tip" color="var(--teal)" style={{ marginBottom: "2px" }} />
-            <p style={{ fontFamily: "'Newsreader', serif", fontSize: "12px", color: "var(--text-tertiary)", lineHeight: 1.5 }}>{content.challenge.tip}</p>
+            <Label text="Tip" color="var(--teal)" style={{ marginBottom: "2px" }} /><p style={{ fontFamily: "'Newsreader', serif", fontSize: "12px", color: "var(--text-tertiary)" }}>{content.challenge.tip}</p>
           </div>
           {!challengeDone && !showReport && <button onClick={() => setSr(true)} style={{ fontSize: "13px", fontWeight: 600, padding: "10px 22px", borderRadius: "10px", border: "none", cursor: "pointer", background: "var(--orange)", color: "#fff" }}>I Did It — Report</button>}
           {showReport && !challengeDone && <div>
             <textarea value={reportText} onChange={e => setRt(e.target.value)} placeholder="How did it feel?" rows={2} style={inputStyle} />
-            <button onClick={async () => { setCd(true); setSr(false); await earnXp(content.challenge.xp); }} disabled={!reportText.trim()} style={{ fontSize: "12px", fontWeight: 600, padding: "10px 22px", borderRadius: "10px", border: "none", cursor: "pointer", marginTop: "8px", background: reportText.trim() ? "var(--green)" : "var(--border)", color: reportText.trim() ? "#fff" : "var(--text-muted)" }}>Submit</button>
+            <button onClick={async () => { setCd(true); setSr(false); await earnXp(content.challenge.xp); await saveProgress({ challengeDone: true }); }} disabled={!reportText.trim()} style={{ fontSize: "12px", fontWeight: 600, padding: "10px 22px", borderRadius: "10px", border: "none", cursor: "pointer", marginTop: "8px", background: reportText.trim() ? "var(--green)" : "var(--border)", color: reportText.trim() ? "#fff" : "var(--text-muted)" }}>Submit</button>
           </div>}
           {challengeDone && <p style={{ fontFamily: "'Newsreader', serif", fontSize: "13px", color: "var(--green)", fontStyle: "italic" }}>Mission complete. +{content.challenge.xp} XP</p>}
         </Card>
@@ -417,17 +412,31 @@ function TodayTab({ profile, refreshProfile }) {
       {/* Journal */}
       {content.journal && <AnimIn delay={440}>
         <Card style={{ marginBottom: "14px", borderColor: journalDone ? "var(--green)" : undefined }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
-            <IconTarget size={16} color="var(--purple)" />
-            <Label text="Reflection" color="var(--purple)" style={{ marginBottom: 0 }} />
-          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}><IconPen size={16} color="var(--purple)" /><Label text="Reflection" color="var(--purple)" style={{ marginBottom: 0 }} /></div>
           <p style={{ fontFamily: "'Newsreader', serif", fontSize: "15px", fontStyle: "italic", color: journalDone ? "var(--text-muted)" : "var(--text-secondary)", lineHeight: 1.55, marginBottom: "12px" }}>"{content.journal.prompt}"</p>
           {!journalDone && !showJournal && <button onClick={() => setSj(true)} style={{ fontSize: "12px", fontWeight: 600, padding: "8px 18px", borderRadius: "8px", border: "1.5px solid var(--purple)", background: "var(--purple-soft)", color: "var(--purple)", cursor: "pointer" }}>Write</button>}
           {showJournal && !journalDone && <div>
             <textarea value={journalText} onChange={e => setJtx(e.target.value)} placeholder="Be honest with yourself..." rows={3} style={{ ...inputStyle, borderColor: "var(--purple)" }} />
-            <button onClick={async () => { if (journalText.trim()) { setJd(true); setSj(false); await saveJournalEntry(user.uid, day, journalText, content.journal.prompt); await earnXp(content.journal.xp); } }} disabled={!journalText.trim()} style={{ fontSize: "12px", fontWeight: 600, padding: "8px 18px", borderRadius: "8px", border: "none", cursor: "pointer", marginTop: "8px", background: journalText.trim() ? "var(--purple)" : "var(--border)", color: journalText.trim() ? "#fff" : "var(--text-muted)" }}>Save</button>
+            <button onClick={async () => { if (journalText.trim()) { setJd(true); setSj(false); await saveJournalEntry(user.uid, day, journalText, content.journal.prompt); await earnXp(content.journal.xp); await saveProgress({ journalDone: true }); }}} disabled={!journalText.trim()} style={{ fontSize: "12px", fontWeight: 600, padding: "8px 18px", borderRadius: "8px", border: "none", cursor: "pointer", marginTop: "8px", background: journalText.trim() ? "var(--purple)" : "var(--border)", color: journalText.trim() ? "#fff" : "var(--text-muted)" }}>Save</button>
           </div>}
           {journalDone && <p style={{ fontFamily: "'Newsreader', serif", fontSize: "13px", color: "var(--purple)", fontStyle: "italic" }}>Saved. +{content.journal.xp} XP</p>}
+        </Card>
+      </AnimIn>}
+
+      {/* What I Learned — only shows after at least 1 prescription is completed */}
+      {completedCount > 0 && <AnimIn delay={500}>
+        <Card style={{ marginBottom: "14px", borderColor: learnedSaved ? "var(--green)" : undefined }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+            <IconBook size={16} color="var(--teal)" />
+            <Label text="What I Learned Today" color="var(--teal)" style={{ marginBottom: 0 }} />
+          </div>
+          <p style={{ fontFamily: "'Newsreader', serif", fontSize: "14px", color: "var(--text-secondary)", lineHeight: 1.55, marginBottom: "12px" }}>Write down the key insight or moment that resonated with you from today's content.</p>
+          {!learnedSaved && !showLearned && <button onClick={() => setSlr(true)} style={{ fontSize: "12px", fontWeight: 600, padding: "8px 18px", borderRadius: "8px", border: "1.5px solid var(--teal)", background: "var(--teal-soft)", color: "var(--teal)", cursor: "pointer" }}>Write Notes</button>}
+          {showLearned && !learnedSaved && <div>
+            <textarea value={learnedText} onChange={e => setLt(e.target.value)} placeholder="What stood out? What surprised you? What do you want to remember?" rows={4} style={{ ...inputStyle, borderColor: "var(--teal)" }} />
+            <button onClick={async () => { if (learnedText.trim()) { setLs(true); setSlr(false); await saveJournalEntry(user.uid, day, learnedText, "What I Learned — Day " + day); await earnXp(10); await saveProgress({ notesSaved: true }); }}} disabled={!learnedText.trim()} style={{ fontSize: "12px", fontWeight: 600, padding: "8px 18px", borderRadius: "8px", border: "none", cursor: "pointer", marginTop: "8px", background: learnedText.trim() ? "var(--teal)" : "var(--border)", color: learnedText.trim() ? "#fff" : "var(--text-muted)" }}>Save Notes</button>
+          </div>}
+          {learnedSaved && <p style={{ fontFamily: "'Newsreader', serif", fontSize: "13px", color: "var(--teal)", fontStyle: "italic" }}>Notes saved. +10 XP</p>}
         </Card>
       </AnimIn>}
     </div>
@@ -435,44 +444,35 @@ function TodayTab({ profile, refreshProfile }) {
 }
 
 // ═══════════════════════════════════
-//  COACH TAB (with persistence)
+//  COACH TAB (persistent chat)
 // ═══════════════════════════════════
 function CoachTab({ profile }) {
   const { user } = useAuth();
+  const day = profile.startDate ? calculateCurrentDay(profile.startDate) : (profile.currentDay || 1);
+  const content = getDayContent(profile.profile, day);
   const [msgs, setMsgs] = useState([]);
   const [input, setInput] = useState("");
   const [typing, setTyping] = useState(false);
   const [loading, setLoading] = useState(true);
   const ref = useRef(null);
 
-  // Load saved messages on mount
   useEffect(() => {
-    async function loadMessages() {
+    async function load() {
       try {
         const saved = await getCoachMessages(user.uid);
-        if (saved && saved.length > 0) {
-          setMsgs(saved.map(m => ({ role: m.role, text: m.text })));
-        } else {
-          setMsgs([{ role: "coach", text: `Hey ${profile.name}. I'm here. What's on your mind today?` }]);
-        }
-      } catch (e) {
-        setMsgs([{ role: "coach", text: `Hey ${profile.name}. I'm here. What's on your mind today?` }]);
-      }
+        if (saved && saved.length > 0) { setMsgs(saved.map(m => ({ role: m.role, text: m.text }))); }
+        else { setMsgs([{ role: "coach", text: `Hey ${profile.name}. Day ${day}. I'm here. What's on your mind?` }]); }
+      } catch { setMsgs([{ role: "coach", text: `Hey ${profile.name}. I'm here. What's on your mind?` }]); }
       setLoading(false);
     }
-    if (user) loadMessages();
+    if (user) load();
   }, [user]);
 
-  useEffect(() => {
-    if (ref.current) ref.current.scrollTop = ref.current.scrollHeight;
-  }, [msgs, typing]);
+  useEffect(() => { if (ref.current) ref.current.scrollTop = ref.current.scrollHeight; }, [msgs, typing]);
 
   const PROMPTS = [
-    { text: "I'm struggling today", e: "😔" },
-    { text: "I skipped yesterday", e: "😕" },
-    { text: "I feel progress!", e: "💪" },
-    { text: "I want to quit", e: "🏳️" },
-    { text: "Today scares me", e: "😰" },
+    { text: "I'm struggling today", e: "😔" }, { text: "I skipped yesterday", e: "😕" },
+    { text: "I feel progress!", e: "💪" }, { text: "I want to quit", e: "🏳️" }, { text: "Today scares me", e: "😰" },
   ];
 
   const send = async (text) => {
@@ -480,26 +480,16 @@ function CoachTab({ profile }) {
     const newMsgs = [...msgs, userMsg];
     setMsgs(newMsgs);
     setTyping(true);
-
-    // Save user message to Firestore
     await saveCoachMessage(user.uid, "user", text);
-
     try {
       const res = await fetch("/api/coach", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: newMsgs, userProfile: profile }),
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: newMsgs, userProfile: { ...profile, currentDay: day }, dayContext: content }),
       });
       const data = await res.json();
-      const coachMsg = { role: "coach", text: data.response };
-      setMsgs(prev => [...prev, coachMsg]);
-
-      // Save coach response to Firestore
+      setMsgs(prev => [...prev, { role: "coach", text: data.response }]);
       await saveCoachMessage(user.uid, "coach", data.response);
-    } catch {
-      const errMsg = { role: "coach", text: "I'm having a moment — try again." };
-      setMsgs(prev => [...prev, errMsg]);
-    }
+    } catch { setMsgs(prev => [...prev, { role: "coach", text: "I'm having a moment — try again." }]); }
     setTyping(false);
   };
 
@@ -507,28 +497,16 @@ function CoachTab({ profile }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 140px)", minHeight: "400px" }}>
-      {/* Coach header */}
       <Card style={{ marginBottom: "10px", display: "flex", alignItems: "center", gap: "12px", padding: "12px 16px" }}>
-        <div style={{ width: "38px", height: "38px", borderRadius: "10px", background: "var(--accent-soft)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-          <IconTarget size={18} color="var(--accent)" />
-        </div>
-        <div style={{ flex: 1 }}>
-          <p style={{ fontSize: "14px", fontWeight: 700, color: "var(--text-primary)" }}>Fearless Coach</p>
-          <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "var(--text-muted)" }}>AI-powered · Knows your journey</p>
-        </div>
-        <div style={{ width: "8px", height: "8px", borderRadius: "50%", background: "var(--green)", boxShadow: `0 0 6px var(--green)` }} />
+        <div style={{ width: "38px", height: "38px", borderRadius: "10px", background: "var(--accent-soft)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><IconTarget size={18} color="var(--accent)" /></div>
+        <div style={{ flex: 1 }}><p style={{ fontSize: "14px", fontWeight: 700, color: "var(--text-primary)" }}>Fearless Coach</p><p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "var(--text-muted)" }}>AI-powered · Day {day} · Phase {getPhaseFromDay(day)}</p></div>
+        <div style={{ width: "8px", height: "8px", borderRadius: "50%", background: "var(--green)", boxShadow: "0 0 6px var(--green)" }} />
       </Card>
 
-      {/* Messages */}
       <div ref={ref} style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: "8px", paddingBottom: "8px" }}>
         {msgs.map((m, i) => (
-          <div key={i} style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start", animation: "fadeSlideIn 0.3s ease" }}>
-            <div style={{
-              maxWidth: "82%", padding: "12px 16px", borderRadius: m.role === "user" ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
-              background: m.role === "user" ? "var(--coach-user)" : "var(--coach-bot)",
-              border: m.role === "user" ? "none" : "1px solid var(--border)",
-              boxShadow: "var(--shadow)",
-            }}>
+          <div key={i} style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
+            <div style={{ maxWidth: "82%", padding: "12px 16px", borderRadius: m.role === "user" ? "14px 14px 4px 14px" : "14px 14px 14px 4px", background: m.role === "user" ? "var(--coach-user)" : "var(--coach-bot)", border: m.role === "user" ? "none" : "1px solid var(--border)", boxShadow: "var(--shadow)" }}>
               <p style={{ fontFamily: "'Newsreader', serif", fontSize: "14px", lineHeight: 1.6, color: m.role === "user" ? "#fff" : "var(--text-secondary)" }}>{m.text}</p>
             </div>
           </div>
@@ -536,15 +514,13 @@ function CoachTab({ profile }) {
         {typing && <div style={{ display: "flex" }}><div style={{ padding: "12px 18px", borderRadius: "14px 14px 14px 4px", background: "var(--bg-card)", border: "1px solid var(--border)", display: "flex", gap: "5px" }}>{[0,1,2].map(i => <div key={i} style={{ width: "6px", height: "6px", borderRadius: "50%", background: "var(--text-muted)", animation: `typingDot 1.2s ${i*0.15}s infinite` }} />)}</div></div>}
       </div>
 
-      {/* Quick prompts */}
       <div style={{ display: "flex", gap: "4px", flexWrap: "wrap", padding: "6px 0" }}>
-        {PROMPTS.map((p, i) => <button key={i} onClick={() => send(p.text)} style={{ fontSize: "11px", padding: "6px 10px", borderRadius: "8px", border: "1px solid var(--border)", background: "var(--bg-card)", color: "var(--text-tertiary)", cursor: "pointer", display: "flex", alignItems: "center", gap: "4px", fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 500, transition: "0.15s" }}>{p.e} {p.text}</button>)}
+        {PROMPTS.map((p, i) => <button key={i} onClick={() => send(p.text)} style={{ fontSize: "11px", padding: "6px 10px", borderRadius: "8px", border: "1px solid var(--border)", background: "var(--bg-card)", color: "var(--text-tertiary)", cursor: "pointer", display: "flex", alignItems: "center", gap: "4px", fontWeight: 500 }}>{p.e} {p.text}</button>)}
       </div>
 
-      {/* Input */}
       <div style={{ display: "flex", gap: "8px", borderTop: "1px solid var(--border)", paddingTop: "10px" }}>
-        <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && input.trim()) { send(input.trim()); setInput(""); }}} placeholder="Talk to your coach..." style={{ flex: 1, fontSize: "14px", padding: "12px 14px", borderRadius: "10px", border: "1.5px solid var(--border)", background: "var(--bg-secondary)", color: "var(--text-primary)", outline: "none", fontFamily: "'Plus Jakarta Sans', sans-serif" }} />
-        <button onClick={() => { if (input.trim()) { send(input.trim()); setInput(""); }}} style={{ width: "44px", height: "44px", borderRadius: "10px", border: "none", cursor: "pointer", background: input.trim() ? "var(--accent)" : "var(--bg-elevated)", display: "flex", alignItems: "center", justifyContent: "center", transition: "0.2s" }}>
+        <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && input.trim()) { send(input.trim()); setInput(""); }}} placeholder="Talk to your coach..." style={{ flex: 1, fontSize: "14px", padding: "12px 14px", borderRadius: "10px", border: "1.5px solid var(--border)", background: "var(--bg-secondary)", color: "var(--text-primary)", outline: "none" }} />
+        <button onClick={() => { if (input.trim()) { send(input.trim()); setInput(""); }}} style={{ width: "44px", height: "44px", borderRadius: "10px", border: "none", cursor: "pointer", background: input.trim() ? "var(--accent)" : "var(--bg-elevated)", display: "flex", alignItems: "center", justifyContent: "center" }}>
           <IconSend size={16} color={input.trim() ? "#fff" : "var(--text-muted)"} />
         </button>
       </div>
@@ -556,7 +532,9 @@ function CoachTab({ profile }) {
 //  PROGRESS TAB
 // ═══════════════════════════════════
 function ProgressTab({ profile }) {
-  const score = Math.min(Math.round((profile.currentDay / 84) * 100), 100);
+  const day = profile.startDate ? calculateCurrentDay(profile.startDate) : (profile.currentDay || 1);
+  const phase = getPhaseFromDay(day);
+  const score = Math.min(Math.round((day / 84) * 100), 100);
   const p = PROFILES[profile.profile] || PROFILES.timidity;
 
   return (
@@ -565,16 +543,13 @@ function ProgressTab({ profile }) {
         <Card style={{ marginBottom: "14px", textAlign: "center", padding: "28px 20px", background: "var(--accent-soft)", borderColor: "var(--accent)" }}>
           <div style={{ fontSize: "44px", fontWeight: 800, color: "var(--accent-text)", marginBottom: "4px" }}>{score}%</div>
           <p style={{ fontFamily: "'Newsreader', serif", fontSize: "15px", color: "var(--text-secondary)" }}>Transformation Progress</p>
-          <div style={{ width: "100%", height: "6px", borderRadius: "3px", background: "var(--border)", marginTop: "16px" }}>
-            <div style={{ width: `${score}%`, height: "100%", borderRadius: "3px", background: "var(--accent)", transition: "1s" }} />
-          </div>
+          <div style={{ width: "100%", height: "6px", borderRadius: "3px", background: "var(--border)", marginTop: "16px" }}><div style={{ width: `${score}%`, height: "100%", borderRadius: "3px", background: "var(--accent)", transition: "1s" }} /></div>
         </Card>
       </AnimIn>
-
       <AnimIn delay={140}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "8px", marginBottom: "14px" }}>
           {[
-            { l: "Current Day", v: `${profile.currentDay || 0}/84`, c: "var(--accent-text)", icon: <IconTarget size={18} color="var(--accent)" /> },
+            { l: "Current Day", v: `${day}/84`, c: "var(--accent-text)", icon: <IconTarget size={18} color="var(--accent)" /> },
             { l: "Streak", v: `${profile.streak || 0} days`, c: "var(--orange)", icon: <IconFlame size={18} color="var(--orange)" /> },
             { l: "Level", v: profile.level || 1, c: "var(--teal)", icon: <IconShield size={18} color="var(--teal)" /> },
             { l: "Total XP", v: (profile.xp || 0).toLocaleString(), c: "var(--purple)", icon: <IconZap size={18} color="var(--purple)" /> },
@@ -587,23 +562,16 @@ function ProgressTab({ profile }) {
           ))}
         </div>
       </AnimIn>
-
       <AnimIn delay={220}>
         <Card style={{ marginBottom: "14px" }}>
           <Label text="Your Profile" color="var(--accent-text)" />
           <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
-            <div style={{ width: "48px", height: "48px", borderRadius: "14px", background: `color-mix(in srgb, ${p.color} 12%, transparent)`, border: `1.5px solid ${p.color}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-              <IconShield size={22} color={p.color} />
-            </div>
-            <div>
-              <h3 style={{ fontSize: "16px", fontWeight: 700, color: "var(--text-primary)" }}>{p.title}</h3>
-              <p style={{ fontFamily: "'Newsreader', serif", fontSize: "13px", color: "var(--text-tertiary)", marginTop: "2px" }}>{p.root}</p>
-            </div>
+            <div style={{ width: "48px", height: "48px", borderRadius: "14px", background: `color-mix(in srgb, ${p.color} 12%, transparent)`, border: `1.5px solid ${p.color}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><IconShield size={22} color={p.color} /></div>
+            <div><h3 style={{ fontSize: "16px", fontWeight: 700, color: "var(--text-primary)" }}>{p.title}</h3><p style={{ fontFamily: "'Newsreader', serif", fontSize: "13px", color: "var(--text-tertiary)", marginTop: "2px" }}>{p.root}</p></div>
           </div>
           <p style={{ fontFamily: "'Newsreader', serif", fontSize: "14px", color: "var(--text-secondary)", lineHeight: 1.65, marginTop: "12px" }}>{p.description}</p>
         </Card>
       </AnimIn>
-
       <AnimIn delay={300}>
         <Card>
           <Label text="Phase Progress" color="var(--teal)" />
@@ -613,19 +581,97 @@ function ProgressTab({ profile }) {
             { n: "Proving", c: "var(--orange)", days: 28, start: 42 },
             { n: "Identity Lock", c: "var(--red)", days: 14, start: 70 },
           ].map((ph, i) => {
-            const pct = Math.min(Math.max(((profile.currentDay - ph.start) / ph.days) * 100, 0), 100);
+            const pct = Math.min(Math.max(((day - ph.start) / ph.days) * 100, 0), 100);
             return <div key={i} style={{ marginBottom: "10px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
                 <span style={{ fontSize: "13px", fontWeight: 500, color: pct > 0 ? "var(--text-primary)" : "var(--text-muted)" }}>{ph.n}</span>
                 <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "11px", color: pct >= 100 ? "var(--green)" : pct > 0 ? ph.c : "var(--text-muted)", fontWeight: 600 }}>{pct >= 100 ? "✓" : `${Math.round(pct)}%`}</span>
               </div>
-              <div style={{ width: "100%", height: "5px", borderRadius: "3px", background: "var(--border)" }}>
-                <div style={{ width: `${pct}%`, height: "100%", borderRadius: "3px", background: ph.c, transition: "1s" }} />
-              </div>
+              <div style={{ width: "100%", height: "5px", borderRadius: "3px", background: "var(--border)" }}><div style={{ width: `${pct}%`, height: "100%", borderRadius: "3px", background: ph.c, transition: "1s" }} /></div>
             </div>;
           })}
         </Card>
       </AnimIn>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════
+//  NOTES HISTORY TAB
+// ═══════════════════════════════════
+function NotesTab({ profile }) {
+  const { user } = useAuth();
+  const [notes, setNotes] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const { getDocs, query, collection, orderBy } = await import("firebase/firestore");
+        const { db } = await import("@/lib/firebase");
+        const q = query(collection(db, "users", user.uid, "journal"), orderBy("createdAt", "desc"));
+        const snap = await getDocs(q);
+        setNotes(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      } catch (e) { console.log("Failed to load notes", e); }
+      setLoading(false);
+    }
+    if (user) load();
+  }, [user]);
+
+  if (loading) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "50vh" }}><p style={{ color: "var(--text-muted)", fontFamily: "'JetBrains Mono', monospace", fontSize: "12px" }}>Loading your notes...</p></div>;
+
+  const learned = notes.filter(n => n.prompt?.startsWith("What I Learned"));
+  const reflections = notes.filter(n => !n.prompt?.startsWith("What I Learned"));
+
+  return (
+    <div>
+      <AnimIn delay={60}>
+        <h2 style={{ fontSize: "20px", fontWeight: 800, color: "var(--text-primary)", marginBottom: "4px" }}>Your Notes</h2>
+        <p style={{ fontFamily: "'Newsreader', serif", fontSize: "14px", color: "var(--text-tertiary)", marginBottom: "20px" }}>{notes.length} entries across your journey</p>
+      </AnimIn>
+
+      {/* What I Learned notes */}
+      {learned.length > 0 && <AnimIn delay={120}>
+        <Label text={`Learnings (${learned.length})`} color="var(--teal)" />
+        {learned.map((note, i) => (
+          <Card key={note.id} style={{ marginBottom: "8px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+              <IconBook size={14} color="var(--teal)" />
+              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "var(--teal)" }}>Day {note.day}</span>
+              {note.createdAt && <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "var(--text-muted)" }}>
+                {note.createdAt.toDate ? note.createdAt.toDate().toLocaleDateString() : ""}
+              </span>}
+            </div>
+            <p style={{ fontFamily: "'Newsreader', serif", fontSize: "14px", color: "var(--text-secondary)", lineHeight: 1.65 }}>{note.text}</p>
+          </Card>
+        ))}
+      </AnimIn>}
+
+      {/* Reflections */}
+      {reflections.length > 0 && <AnimIn delay={200}>
+        <Label text={`Reflections (${reflections.length})`} color="var(--purple)" style={{ marginTop: "20px" }} />
+        {reflections.map((note, i) => (
+          <Card key={note.id} style={{ marginBottom: "8px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
+              <IconPen size={14} color="var(--purple)" />
+              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "var(--purple)" }}>Day {note.day}</span>
+              {note.createdAt && <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "var(--text-muted)" }}>
+                {note.createdAt.toDate ? note.createdAt.toDate().toLocaleDateString() : ""}
+              </span>}
+            </div>
+            {note.prompt && <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "var(--text-muted)", marginBottom: "6px" }}>Prompt: {note.prompt.slice(0, 80)}...</p>}
+            <p style={{ fontFamily: "'Newsreader', serif", fontSize: "14px", color: "var(--text-secondary)", lineHeight: 1.65 }}>{note.text}</p>
+          </Card>
+        ))}
+      </AnimIn>}
+
+      {notes.length === 0 && <AnimIn delay={120}>
+        <Card style={{ textAlign: "center", padding: "40px 20px" }}>
+          <IconPen size={32} color="var(--text-muted)" />
+          <p style={{ fontSize: "15px", fontWeight: 600, color: "var(--text-secondary)", marginTop: "12px" }}>No notes yet</p>
+          <p style={{ fontFamily: "'Newsreader', serif", fontSize: "14px", color: "var(--text-tertiary)", marginTop: "4px" }}>Your learnings and reflections will appear here as you progress through the program.</p>
+        </Card>
+      </AnimIn>}
     </div>
   );
 }
@@ -638,38 +684,23 @@ function SettingsTab({ profile }) {
   const { theme, toggleTheme } = useTheme();
   const router = useRouter();
   const p = PROFILES[profile.profile] || PROFILES.timidity;
+  const day = profile.startDate ? calculateCurrentDay(profile.startDate) : (profile.currentDay || 1);
 
   const handleLogout = async () => { await logout(); router.push("/auth/login"); };
 
   function Toggle({ on, onToggle }) {
-    return (
-      <div onClick={onToggle} style={{ width: "44px", height: "26px", borderRadius: "13px", background: on ? "var(--accent)" : "var(--border)", cursor: "pointer", position: "relative", transition: "0.3s", flexShrink: 0 }}>
-        <div style={{ width: "20px", height: "20px", borderRadius: "50%", background: "#fff", position: "absolute", top: "3px", left: on ? "21px" : "3px", transition: "0.3s", boxShadow: "0 1px 3px rgba(0,0,0,0.2)" }} />
-      </div>
-    );
+    return <div onClick={onToggle} style={{ width: "44px", height: "26px", borderRadius: "13px", background: on ? "var(--accent)" : "var(--border)", cursor: "pointer", position: "relative", transition: "0.3s", flexShrink: 0 }}><div style={{ width: "20px", height: "20px", borderRadius: "50%", background: "#fff", position: "absolute", top: "3px", left: on ? "21px" : "3px", transition: "0.3s", boxShadow: "0 1px 3px rgba(0,0,0,0.2)" }} /></div>;
   }
-
   function Row({ label, desc, children }) {
-    return (
-      <div style={{ display: "flex", alignItems: "center", gap: "14px", padding: "14px 0", borderBottom: "1px solid var(--border)" }}>
-        <div style={{ flex: 1 }}>
-          <p style={{ fontSize: "14px", fontWeight: 500, color: "var(--text-primary)" }}>{label}</p>
-          {desc && <p style={{ fontFamily: "'Newsreader', serif", fontSize: "12px", color: "var(--text-tertiary)", marginTop: "2px" }}>{desc}</p>}
-        </div>
-        {children}
-      </div>
-    );
+    return <div style={{ display: "flex", alignItems: "center", gap: "14px", padding: "14px 0", borderBottom: "1px solid var(--border)" }}><div style={{ flex: 1 }}><p style={{ fontSize: "14px", fontWeight: 500, color: "var(--text-primary)" }}>{label}</p>{desc && <p style={{ fontFamily: "'Newsreader', serif", fontSize: "12px", color: "var(--text-tertiary)", marginTop: "2px" }}>{desc}</p>}</div>{children}</div>;
   }
 
   return (
     <div>
-      {/* Profile card */}
       <AnimIn delay={60}>
         <Card style={{ marginBottom: "14px" }}>
           <div style={{ display: "flex", gap: "16px", alignItems: "center" }}>
-            <div style={{ width: "56px", height: "56px", borderRadius: "16px", background: `color-mix(in srgb, ${p.color} 12%, transparent)`, border: `1.5px solid ${p.color}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-              <IconShield size={26} color={p.color} />
-            </div>
+            <div style={{ width: "56px", height: "56px", borderRadius: "16px", background: `color-mix(in srgb, ${p.color} 12%, transparent)`, border: `1.5px solid ${p.color}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><IconShield size={26} color={p.color} /></div>
             <div>
               <h2 style={{ fontSize: "20px", fontWeight: 800, color: "var(--text-primary)" }}>{profile.name}</h2>
               <Badge text={p.title} color={p.color} />
@@ -677,16 +708,14 @@ function SettingsTab({ profile }) {
             </div>
           </div>
           <div style={{ display: "flex", gap: "12px", marginTop: "16px" }}>
-            {[{ l: "Level", v: profile.level || 1, c: "var(--accent-text)" }, { l: "Day", v: `${day || 0}/84`, c: "var(--teal)" }, { l: "Streak", v: profile.streak || 0, c: "var(--orange)" }, { l: "XP", v: (profile.xp || 0).toLocaleString(), c: "var(--purple)" }].map((s, i) => <div key={i}><p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "9px", color: "var(--text-muted)", letterSpacing: "1px" }}>{s.l}</p><p style={{ fontSize: "14px", fontWeight: 700, color: s.c }}>{s.v}</p></div>)}
+            {[{ l: "Level", v: profile.level || 1, c: "var(--accent-text)" }, { l: "Day", v: `${day}/84`, c: "var(--teal)" }, { l: "Streak", v: profile.streak || 0, c: "var(--orange)" }, { l: "XP", v: (profile.xp || 0).toLocaleString(), c: "var(--purple)" }].map((s, i) => <div key={i}><p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "9px", color: "var(--text-muted)", letterSpacing: "1px" }}>{s.l}</p><p style={{ fontSize: "14px", fontWeight: 700, color: s.c }}>{s.v}</p></div>)}
           </div>
         </Card>
       </AnimIn>
-
-      {/* Appearance */}
       <AnimIn delay={120}>
         <Card style={{ marginBottom: "14px" }}>
           <Label text="Appearance" color="var(--accent-text)" />
-          <Row label="Theme" desc={theme === "dark" ? "Dark mode is active" : "Light mode is active"}>
+          <Row label="Theme" desc={theme === "dark" ? "Dark mode" : "Light mode"}>
             <div onClick={toggleTheme} style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", padding: "6px 14px", borderRadius: "10px", background: "var(--bg-secondary)", border: "1px solid var(--border)" }}>
               {theme === "dark" ? <IconMoon size={16} color="var(--text-secondary)" /> : <IconSun size={16} color="var(--orange)" />}
               <span style={{ fontSize: "13px", fontWeight: 500, color: "var(--text-secondary)" }}>{theme === "dark" ? "Dark" : "Light"}</span>
@@ -694,52 +723,33 @@ function SettingsTab({ profile }) {
           </Row>
         </Card>
       </AnimIn>
-
-      {/* Account */}
       <AnimIn delay={180}>
         <Card style={{ marginBottom: "14px" }}>
           <Label text="Account" color="var(--teal)" />
-          <Row label="Fear Profile" desc={p.title}>
-            <Badge text={`Phase ${profile.phase || 1}`} color="var(--accent-text)" />
-          </Row>
+          <Row label="Fear Profile" desc={p.title}><Badge text={`Phase ${getPhaseFromDay(day)}`} color="var(--accent-text)" /></Row>
           <Row label="Email" desc={profile.email} />
-          <Row label="Current Day" desc={`${day || 0}/84`} />
-          <Row label="Member Since" desc={profile.createdAt ? new Date(profile.createdAt.seconds * 1000).toLocaleDateString() : "—"} />
+          <Row label="Current Day" desc={`Day ${day} of 84`} />
+          <Row label="Member Since" desc={profile.createdAt ? (profile.createdAt.toDate ? profile.createdAt.toDate().toLocaleDateString() : new Date(profile.createdAt.seconds * 1000).toLocaleDateString()) : "—"} />
         </Card>
       </AnimIn>
-
-      {/* Sign out */}
       <AnimIn delay={240}>
-        <button onClick={handleLogout} style={{ width: "100%", fontSize: "14px", fontWeight: 600, padding: "14px", borderRadius: "12px", border: "1.5px solid var(--red)", background: "var(--red-soft)", color: "var(--red)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}>
-          <IconLogout size={16} /> Sign Out
-        </button>
+        <button onClick={handleLogout} style={{ width: "100%", fontSize: "14px", fontWeight: 600, padding: "14px", borderRadius: "12px", border: "1.5px solid var(--red)", background: "var(--red-soft)", color: "var(--red)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}><IconLogout size={16} /> Sign Out</button>
       </AnimIn>
-
-      <AnimIn delay={280}>
-        <p style={{ textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "var(--text-muted)", marginTop: "24px" }}>Fearless v1.0</p>
-      </AnimIn>
+      <AnimIn delay={280}><p style={{ textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "var(--text-muted)", marginTop: "24px" }}>Fearless v1.0</p></AnimIn>
     </div>
   );
 }
 
 // ═══════════════════════════════════
-//  MAIN SHELL
+//  MAIN APP SHELL
 // ═══════════════════════════════════
 const TABS = [
-  { key: "today", label: "Today" },
-  { key: "coach", label: "Coach" },
-  { key: "progress", label: "Progress" },
-  { key: "settings", label: "Profile" },
+  { key: "today", label: "Today", icon: (active) => <IconTarget size={20} color={active ? "var(--accent)" : "var(--text-muted)"} /> },
+  { key: "coach", label: "Coach", icon: (active) => <IconShield size={20} color={active ? "var(--accent)" : "var(--text-muted)"} /> },
+  { key: "notes", label: "Notes", icon: (active) => <IconBook size={20} color={active ? "var(--accent)" : "var(--text-muted)"} /> },
+  { key: "progress", label: "Progress", icon: (active) => <IconChart size={20} color={active ? "var(--accent)" : "var(--text-muted)"} /> },
+  { key: "settings", label: "Profile", icon: (active) => <IconUser size={20} color={active ? "var(--accent)" : "var(--text-muted)"} /> },
 ];
-
-const TAB_ICONS = {
-  today: IconTarget,
-  coach: IconTarget,
-  progress: IconChart,
-  settings: IconUser,
-};
-
-// Using imported icons for nav
 
 export default function DashboardPage() {
   const { user, profile, loading, refreshProfile } = useAuth();
@@ -747,13 +757,8 @@ export default function DashboardPage() {
   const [tab, setTab] = useState("today");
   const scrollRef = useRef(null);
 
-  useEffect(() => {
-    if (!loading && !user) router.push("/auth/login");
-  }, [user, loading, router]);
-
-  useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = 0;
-  }, [tab]);
+  useEffect(() => { if (!loading && !user) router.push("/auth/login"); }, [user, loading, router]);
+  useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = 0; }, [tab]);
 
   if (loading) return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg-primary)" }}>
@@ -767,50 +772,26 @@ export default function DashboardPage() {
   if (!user || !profile) return null;
   if (!profile.diagnosticComplete) return <DiagnosticFlow user={user} onComplete={() => refreshProfile()} />;
 
-  const navIcons = {
-    today: <IconTarget size={20} />,
-    coach: <IconTarget size={20} />,
-    progress: <IconChart size={20} />,
-    settings: <IconUser size={20} />,
-  };
-
   return (
     <div style={{ minHeight: "100vh", maxHeight: "100vh", display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--bg-primary)" }}>
       <div ref={scrollRef} style={{ flex: 1, overflowY: "auto", padding: "20px 16px 0" }}>
         <div style={{ maxWidth: "600px", margin: "0 auto", paddingBottom: "80px" }}>
           {tab === "today" && <TodayTab profile={profile} refreshProfile={refreshProfile} />}
           {tab === "coach" && <CoachTab profile={profile} />}
+          {tab === "notes" && <NotesTab profile={profile} />}
           {tab === "progress" && <ProgressTab profile={profile} />}
           {tab === "settings" && <SettingsTab profile={profile} refreshProfile={refreshProfile} />}
         </div>
       </div>
 
-      {/* Bottom Nav */}
-      <div style={{
-        display: "flex", justifyContent: "space-around", alignItems: "center",
-        padding: "6px 0 10px", flexShrink: 0,
-        background: "var(--nav-bg)", backdropFilter: "blur(20px)",
-        borderTop: "1px solid var(--border)",
-      }}>
+      <div style={{ display: "flex", justifyContent: "space-around", alignItems: "center", padding: "6px 0 10px", flexShrink: 0, background: "var(--nav-bg)", backdropFilter: "blur(20px)", borderTop: "1px solid var(--border)" }}>
         {TABS.map(t => {
           const active = tab === t.key;
           return (
-            <button key={t.key} onClick={() => setTab(t.key)} style={{
-              display: "flex", flexDirection: "column", alignItems: "center", gap: "2px",
-              background: "none", border: "none", cursor: "pointer", padding: "6px 18px",
-              borderRadius: "10px", transition: "0.2s",
-            }}>
-              <div style={{ color: active ? "var(--accent)" : "var(--text-muted)", transition: "0.2s" }}>
-                {navIcons[t.key]}
-              </div>
-              <span style={{
-                fontFamily: "'JetBrains Mono', monospace", fontSize: "9px", letterSpacing: "0.3px",
-                color: active ? "var(--accent-text)" : "var(--text-muted)",
-                fontWeight: active ? 600 : 400, transition: "0.2s",
-              }}>
-                {t.label}
-              </span>
-              {active && <div style={{ width: "4px", height: "4px", borderRadius: "50%", background: "var(--accent)", marginTop: "1px" }} />}
+            <button key={t.key} onClick={() => setTab(t.key)} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "2px", background: "none", border: "none", cursor: "pointer", padding: "6px 12px", borderRadius: "10px" }}>
+              {t.icon(active)}
+              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "9px", color: active ? "var(--accent-text)" : "var(--text-muted)", fontWeight: active ? 600 : 400 }}>{t.label}</span>
+              {active && <div style={{ width: "4px", height: "4px", borderRadius: "50%", background: "var(--accent)" }} />}
             </button>
           );
         })}
