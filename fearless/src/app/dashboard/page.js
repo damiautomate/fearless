@@ -4,23 +4,19 @@ import { useAuth } from "@/lib/auth-context";
 import { useTheme } from "@/lib/theme-context";
 import { useRouter } from "next/navigation";
 import { saveDiagnostic, addXp, saveJournalEntry, saveCoachMessage, getCoachMessages, getDayProgress, saveDayProgress } from "@/lib/firestore";
-import { getDayContent as getHardcodedContent, PROFILES, getXpForNextLevel } from "@/lib/content";import { calculateCurrentDay, getPhaseFromDay } from "@/lib/day-tracker";
+import { getDayContent as getHardcodedContent, PROFILES, getXpForNextLevel } from "@/lib/content";
+import { calculateCurrentDay, getPhaseFromDay } from "@/lib/day-tracker";
 import { getProactiveMessage } from "@/lib/proactive-coach";
 import { IconFlame, IconZap, IconCheck, IconSend, IconChevron, IconSun, IconMoon, IconLogout, IconTarget, IconShield, IconChart, IconUser, IconPen, IconBook, typeIconMap, typeColorMap } from "@/components/icons";
-
-
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
+// Reads content from Firestore (admin-edited) first, falls back to hardcoded
 async function getDayContentFromDB(profile, dayNumber) {
   try {
     const snap = await getDoc(doc(db, "content", `day_${dayNumber}`));
-    if (snap.exists()) {
-      return snap.data();
-    }
-  } catch (e) {
-    console.log("Firestore content not available, using fallback");
-  }
+    if (snap.exists()) return snap.data();
+  } catch (e) { console.log("Firestore content unavailable, using fallback"); }
   return getHardcodedContent(profile, dayNumber);
 }
 
@@ -240,14 +236,14 @@ function TodayTab({ profile, refreshProfile }) {
   const { user } = useAuth();
   const day = profile.startDate ? calculateCurrentDay(profile.startDate) : (profile.currentDay || 1);
   const phase = getPhaseFromDay(day);
-  
-const [content, setContent] = useState(null);
-useEffect(() => {
-  getDayContentFromDB(profile.profile, day).then(c => setContent(c));
-}, [day]);
-  
+  const [content, setContent] = useState(null);
   const p = PROFILES[profile.profile] || PROFILES.timidity;
   const pct = Math.min(((profile.xp || 0) / getXpForNextLevel(profile.level || 1)) * 100, 100);
+
+  // Load content from Firestore (admin-edited) first
+  useEffect(() => {
+    getDayContentFromDB(profile.profile, day).then(c => setContent(c));
+  }, [day]);
 
   // ─── Persistent completion state ───
   const [completedItems, setCompletedItems] = useState({});
@@ -323,7 +319,8 @@ useEffect(() => {
 
       {/* Proactive Coach Banner */}
       {(() => {
-const msg = getProactiveMessage({ ...profile, currentDay: day });        if (!msg) return null;
+        const msg = getProactiveMessage(profile);
+        if (!msg) return null;
         return (
           <AnimIn delay={0}>
             <div style={{ padding: "16px 18px", borderRadius: "14px", marginBottom: "16px", background: `color-mix(in srgb, ${msg.color} 8%, var(--bg-card))`, border: `1.5px solid color-mix(in srgb, ${msg.color} 20%, transparent)` }}>
@@ -468,85 +465,213 @@ const msg = getProactiveMessage({ ...profile, currentDay: day });        if (!ms
 function CoachTab({ profile }) {
   const { user } = useAuth();
   const day = profile.startDate ? calculateCurrentDay(profile.startDate) : (profile.currentDay || 1);
-
   const [content, setContent] = useState(null);
-useEffect(() => {
-  getDayContentFromDB(profile.profile, day).then(c => setContent(c));
-}, [day]);
-
-  
   const [msgs, setMsgs] = useState([]);
   const [input, setInput] = useState("");
   const [typing, setTyping] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [recentNotes, setRecentNotes] = useState([]);
+  const [recentProgress, setRecentProgress] = useState([]);
+  const [completionData, setCompletionData] = useState(null);
   const ref = useRef(null);
 
+  // Load everything: messages, notes, progress, content
   useEffect(() => {
-    async function load() {
+    async function loadAll() {
       try {
+        const { getDocs, query, collection, orderBy, limit } = await import("firebase/firestore");
+        const { db } = await import("@/lib/firebase");
+
+        // Load chat messages
         const saved = await getCoachMessages(user.uid);
-        if (saved && saved.length > 0) { setMsgs(saved.map(m => ({ role: m.role, text: m.text }))); }
-        else { setMsgs([{ role: "coach", text: `Hey ${profile.name}. Day ${day}. I'm here. What's on your mind?` }]); }
-      } catch { setMsgs([{ role: "coach", text: `Hey ${profile.name}. I'm here. What's on your mind?` }]); }
+        if (saved && saved.length > 0) {
+          setMsgs(saved.map(m => ({ role: m.role, text: m.text })));
+        } else {
+          setMsgs([{ role: "coach", text: `Hey ${profile.name}. Day ${day}. I know everything about your journey so far — your notes, your progress, your wins and struggles. Talk to me like I've been here the whole time. Because I have.` }]);
+        }
+
+        // Load recent journal/notes (last 10)
+        try {
+          const notesQ = query(collection(db, "users", user.uid, "journal"), orderBy("createdAt", "desc"), limit(10));
+          const notesSnap = await getDocs(notesQ);
+          setRecentNotes(notesSnap.docs.map(d => d.data()));
+        } catch (e) { console.log("Notes load failed", e); }
+
+        // Load recent daily progress (last 7 days)
+        try {
+          const progQ = query(collection(db, "users", user.uid, "progress"), orderBy("day", "desc"), limit(7));
+          const progSnap = await getDocs(progQ);
+          setRecentProgress(progSnap.docs.map(d => d.data()));
+        } catch (e) { console.log("Progress load failed", e); }
+
+        // Load today's progress
+        try {
+          const todayProg = await getDayProgress(user.uid, day);
+          if (todayProg) {
+            setCompletionData({
+              prescriptionsDone: todayProg.completedItems?.length || 0,
+              prescriptionsTotal: 3,
+              challengeDone: todayProg.challengeDone || false,
+              journalDone: todayProg.journalDone || false,
+              notesSaved: todayProg.notesSaved || false,
+            });
+          }
+        } catch (e) { console.log("Today progress load failed", e); }
+
+        // Load today's content
+        try {
+          const contentData = await getDayContentFromDB(profile.profile, day);
+          setContent(contentData);
+        } catch (e) {
+          setContent(getHardcodedContent(profile.profile, day));
+        }
+
+      } catch (e) {
+        console.log("Coach load error", e);
+        setMsgs([{ role: "coach", text: `Hey ${profile.name}. I'm here. What's going on?` }]);
+      }
       setLoading(false);
     }
-    if (user) load();
+    if (user) loadAll();
   }, [user]);
 
   useEffect(() => { if (ref.current) ref.current.scrollTop = ref.current.scrollHeight; }, [msgs, typing]);
-
-  const PROMPTS = [
-    { text: "I'm struggling today", e: "😔" }, { text: "I skipped yesterday", e: "😕" },
-    { text: "I feel progress!", e: "💪" }, { text: "I want to quit", e: "🏳️" }, { text: "Today scares me", e: "😰" },
-  ];
 
   const send = async (text) => {
     const userMsg = { role: "user", text };
     const newMsgs = [...msgs, userMsg];
     setMsgs(newMsgs);
     setTyping(true);
+    setInput("");
     await saveCoachMessage(user.uid, "user", text);
     try {
       const res = await fetch("/api/coach", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: newMsgs, userProfile: { ...profile, currentDay: day }, dayContext: content }),
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: newMsgs,
+          userProfile: { ...profile, currentDay: day, phase: getPhaseFromDay(day) },
+          dayContext: content,
+          completionData,
+          recentNotes,
+          recentProgress,
+        }),
       });
       const data = await res.json();
       setMsgs(prev => [...prev, { role: "coach", text: data.response }]);
       await saveCoachMessage(user.uid, "coach", data.response);
-    } catch { setMsgs(prev => [...prev, { role: "coach", text: "I'm having a moment — try again." }]); }
+    } catch {
+      setMsgs(prev => [...prev, { role: "coach", text: "Something went wrong on my end. Try again." }]);
+    }
     setTyping(false);
   };
 
-  if (loading) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "50vh" }}><p style={{ color: "var(--text-muted)", fontFamily: "'JetBrains Mono', monospace", fontSize: "12px" }}>Loading conversation...</p></div>;
+  const startNewChat = async () => {
+    const opener = `New conversation. Day ${day}. ${profile.name}, what's happening?`;
+    setMsgs([{ role: "coach", text: opener }]);
+    try {
+      const { getDocs, query, collection, writeBatch } = await import("firebase/firestore");
+      const { db } = await import("@/lib/firebase");
+      const q = query(collection(db, "users", user.uid, "coachMessages"));
+      const snap = await getDocs(q);
+      if (snap.size > 0) {
+        const batch = writeBatch(db);
+        snap.docs.forEach(d => batch.delete(d.ref));
+        await batch.commit();
+      }
+    } catch (e) { console.log("Failed to clear old messages", e); }
+    await saveCoachMessage(user.uid, "coach", opener);
+  };
+
+  if (loading) return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "60vh" }}>
+      <div style={{ textAlign: "center" }}>
+        <IconTarget size={28} color="var(--accent)" />
+        <p style={{ color: "var(--text-muted)", fontFamily: "'JetBrains Mono', monospace", fontSize: "12px", marginTop: "12px" }}>Preparing your coach...</p>
+      </div>
+    </div>
+  );
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 140px)", minHeight: "400px" }}>
-      <Card style={{ marginBottom: "10px", display: "flex", alignItems: "center", gap: "12px", padding: "12px 16px" }}>
-        <div style={{ width: "38px", height: "38px", borderRadius: "10px", background: "var(--accent-soft)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><IconTarget size={18} color="var(--accent)" /></div>
-        <div style={{ flex: 1 }}><p style={{ fontSize: "14px", fontWeight: 700, color: "var(--text-primary)" }}>Fearless Coach</p><p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "var(--text-muted)" }}>AI-powered · Day {day} · Phase {getPhaseFromDay(day)}</p></div>
-        <div style={{ width: "8px", height: "8px", borderRadius: "50%", background: "var(--green)", boxShadow: "0 0 6px var(--green)" }} />
-      </Card>
+    <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 130px)", minHeight: "440px" }}>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", gap: "14px", padding: "4px 0 16px", borderBottom: "1px solid var(--border)", marginBottom: "16px" }}>
+        <div style={{ width: "44px", height: "44px", borderRadius: "14px", background: "var(--accent-soft)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <IconTarget size={22} color="var(--accent)" />
+        </div>
+        <div style={{ flex: 1 }}>
+          <p style={{ fontSize: "16px", fontWeight: 700, color: "var(--text-primary)" }}>Fearless Coach</p>
+          <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "11px", color: "var(--text-muted)" }}>
+            Day {day} · Phase {getPhaseFromDay(day)} · Knows your full journey
+          </p>
+        </div>
+        <button onClick={startNewChat} style={{
+          fontSize: "11px", fontWeight: 600, padding: "7px 14px", borderRadius: "8px",
+          border: "1px solid var(--border)", background: "var(--bg-secondary)",
+          color: "var(--text-tertiary)", cursor: "pointer", whiteSpace: "nowrap",
+        }}>New Chat</button>
+      </div>
 
-      <div ref={ref} style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: "8px", paddingBottom: "8px" }}>
+      {/* Messages */}
+      <div ref={ref} style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: "16px", paddingBottom: "12px" }}>
         {msgs.map((m, i) => (
           <div key={i} style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
-            <div style={{ maxWidth: "82%", padding: "12px 16px", borderRadius: m.role === "user" ? "14px 14px 4px 14px" : "14px 14px 14px 4px", background: m.role === "user" ? "var(--coach-user)" : "var(--coach-bot)", border: m.role === "user" ? "none" : "1px solid var(--border)", boxShadow: "var(--shadow)" }}>
-              <p style={{ fontFamily: "'Newsreader', serif", fontSize: "14px", lineHeight: 1.6, color: m.role === "user" ? "#fff" : "var(--text-secondary)" }}>{m.text}</p>
+            {m.role === "coach" && (
+              <div style={{ width: "30px", height: "30px", borderRadius: "10px", background: "var(--accent-soft)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginRight: "10px", marginTop: "2px" }}>
+                <IconTarget size={14} color="var(--accent)" />
+              </div>
+            )}
+            <div style={{
+              maxWidth: "78%",
+              padding: "14px 18px",
+              borderRadius: m.role === "user" ? "18px 18px 4px 18px" : "18px 18px 18px 4px",
+              background: m.role === "user" ? "var(--accent)" : "var(--bg-card)",
+              border: m.role === "user" ? "none" : "1px solid var(--border)",
+              boxShadow: "var(--shadow)",
+            }}>
+              <p style={{
+                fontFamily: "'Newsreader', serif", fontSize: "15px", lineHeight: 1.7,
+                color: m.role === "user" ? "#fff" : "var(--text-primary)",
+              }}>{m.text}</p>
             </div>
           </div>
         ))}
-        {typing && <div style={{ display: "flex" }}><div style={{ padding: "12px 18px", borderRadius: "14px 14px 14px 4px", background: "var(--bg-card)", border: "1px solid var(--border)", display: "flex", gap: "5px" }}>{[0,1,2].map(i => <div key={i} style={{ width: "6px", height: "6px", borderRadius: "50%", background: "var(--text-muted)", animation: `typingDot 1.2s ${i*0.15}s infinite` }} />)}</div></div>}
+        {typing && (
+          <div style={{ display: "flex", alignItems: "flex-start", gap: "10px" }}>
+            <div style={{ width: "30px", height: "30px", borderRadius: "10px", background: "var(--accent-soft)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <IconTarget size={14} color="var(--accent)" />
+            </div>
+            <div style={{ padding: "14px 20px", borderRadius: "18px 18px 18px 4px", background: "var(--bg-card)", border: "1px solid var(--border)", display: "flex", gap: "6px", alignItems: "center" }}>
+              {[0,1,2].map(i => <div key={i} style={{ width: "7px", height: "7px", borderRadius: "50%", background: "var(--text-muted)", animation: `typingDot 1.2s ${i*0.15}s infinite` }} />)}
+            </div>
+          </div>
+        )}
       </div>
 
-      <div style={{ display: "flex", gap: "4px", flexWrap: "wrap", padding: "6px 0" }}>
-        {PROMPTS.map((p, i) => <button key={i} onClick={() => send(p.text)} style={{ fontSize: "11px", padding: "6px 10px", borderRadius: "8px", border: "1px solid var(--border)", background: "var(--bg-card)", color: "var(--text-tertiary)", cursor: "pointer", display: "flex", alignItems: "center", gap: "4px", fontWeight: 500 }}>{p.e} {p.text}</button>)}
-      </div>
-
-      <div style={{ display: "flex", gap: "8px", borderTop: "1px solid var(--border)", paddingTop: "10px" }}>
-        <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && input.trim()) { send(input.trim()); setInput(""); }}} placeholder="Talk to your coach..." style={{ flex: 1, fontSize: "14px", padding: "12px 14px", borderRadius: "10px", border: "1.5px solid var(--border)", background: "var(--bg-secondary)", color: "var(--text-primary)", outline: "none" }} />
-        <button onClick={() => { if (input.trim()) { send(input.trim()); setInput(""); }}} style={{ width: "44px", height: "44px", borderRadius: "10px", border: "none", cursor: "pointer", background: input.trim() ? "var(--accent)" : "var(--bg-elevated)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <IconSend size={16} color={input.trim() ? "#fff" : "var(--text-muted)"} />
+      {/* Input */}
+      <div style={{ display: "flex", gap: "10px", paddingTop: "14px", borderTop: "1px solid var(--border)" }}>
+        <input
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter" && input.trim()) send(input.trim()); }}
+          placeholder="What's on your mind..."
+          style={{
+            flex: 1, fontSize: "15px", padding: "14px 18px", borderRadius: "14px",
+            border: "1.5px solid var(--border)", background: "var(--bg-secondary)",
+            color: "var(--text-primary)", outline: "none",
+            fontFamily: "'Plus Jakarta Sans', sans-serif",
+          }}
+        />
+        <button
+          onClick={() => { if (input.trim()) send(input.trim()); }}
+          style={{
+            width: "48px", height: "48px", borderRadius: "14px", border: "none", cursor: "pointer",
+            background: input.trim() ? "var(--accent)" : "var(--bg-elevated)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            transition: "background 0.2s",
+          }}
+        >
+          <IconSend size={18} color={input.trim() ? "#fff" : "var(--text-muted)"} />
         </button>
       </div>
     </div>
