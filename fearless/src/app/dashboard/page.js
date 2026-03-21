@@ -677,7 +677,7 @@ function SettingsTab({ profile }) {
             </div>
           </div>
           <div style={{ display: "flex", gap: "12px", marginTop: "16px" }}>
-            {[{ l: "Level", v: profile.level || 1, c: "var(--accent-text)" }, { l: "Day", v: `${profile.currentDay || 0}/84`, c: "var(--teal)" }, { l: "Streak", v: profile.streak || 0, c: "var(--orange)" }, { l: "XP", v: (profile.xp || 0).toLocaleString(), c: "var(--purple)" }].map((s, i) => <div key={i}><p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "9px", color: "var(--text-muted)", letterSpacing: "1px" }}>{s.l}</p><p style={{ fontSize: "14px", fontWeight: 700, color: s.c }}>{s.v}</p></div>)}
+            {[{ l: "Level", v: profile.level || 1, c: "var(--accent-text)" }, { l: "Day", v: `${day || 0}/84`, c: "var(--teal)" }, { l: "Streak", v: profile.streak || 0, c: "var(--orange)" }, { l: "XP", v: (profile.xp || 0).toLocaleString(), c: "var(--purple)" }].map((s, i) => <div key={i}><p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "9px", color: "var(--text-muted)", letterSpacing: "1px" }}>{s.l}</p><p style={{ fontSize: "14px", fontWeight: 700, color: s.c }}>{s.v}</p></div>)}
           </div>
         </Card>
       </AnimIn>
@@ -703,7 +703,7 @@ function SettingsTab({ profile }) {
             <Badge text={`Phase ${profile.phase || 1}`} color="var(--accent-text)" />
           </Row>
           <Row label="Email" desc={profile.email} />
-          <Row label="Current Day" desc={`Day ${profile.currentDay || 0} of 84`} />
+          <Row label="Current Day" desc={`${day || 0}/84`} />
           <Row label="Member Since" desc={profile.createdAt ? new Date(profile.createdAt.seconds * 1000).toLocaleDateString() : "—"} />
         </Card>
       </AnimIn>
