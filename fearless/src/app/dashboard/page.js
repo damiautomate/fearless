@@ -5,6 +5,7 @@ import { useTheme } from "@/lib/theme-context";
 import { useRouter } from "next/navigation";
 import { saveDiagnostic, saveDayProgress, addXp, updateStreak, saveJournalEntry, saveCoachMessage, getCoachMessages, getDayProgress } from "@/lib/firestore";
 import { getDayContent, PROFILES, getXpForNextLevel } from "@/lib/content";
+import { getProactiveMessage } from "@/lib/proactive-coach";
 import { IconFlame, IconZap, IconCheck, IconSend, IconChevron, IconSun, IconMoon, IconLogout, IconTarget, IconShield, IconChart, IconUser, typeIconMap, typeColorMap } from "@/components/icons";
 // ─── Shared UI ───
 function AnimIn({ children, delay = 0, style = {} }) {
@@ -202,7 +203,6 @@ function PrescriptionCard({ rx, delay, onComplete }) {
 function getGreeting(name, day, streak) {
   const hour = new Date().getHours();
   const timeGreet = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
-
   const greetings = [
     `${timeGreet}, ${name}`,
     `You showed up again, ${name}`,
@@ -215,24 +215,16 @@ function getGreeting(name, day, streak) {
     `Still here, still growing, ${name}`,
     `${name}, courage looks like this`,
   ];
-
-  // Streak-specific
   if (streak >= 14) return `${name}, ${streak} days straight. Unstoppable.`;
   if (streak >= 7) return `${streak}-day streak, ${name}. You're on fire.`;
-  if (streak === 0) return `Welcome back, ${name}. Today is a fresh start.`;
-
-  // Day-specific
+  if (streak === 0 && day > 1) return `Welcome back, ${name}. Today is a fresh start.`;
   if (day === 1) return `Welcome, ${name}. Your transformation starts now.`;
   if (day === 7) return `One week down, ${name}. Most people quit by now.`;
   if (day === 14) return `Phase 1 complete, ${name}. You're not the same person.`;
   if (day === 30) return `One month, ${name}. Let that sink in.`;
-  if (day === 42) return `${name}, you just finished Phase 2. The old you wouldn't believe this.`;
-  if (day === 84) return `Day 84, ${name}. You did it. You actually did it.`;
-
-  // Rotate through general greetings based on day number
+  if (day === 84) return `Day 84, ${name}. You did it.`;
   return greetings[day % greetings.length];
 }
-
 
 // ═══════════════════════════════════
 //  TODAY TAB
@@ -279,6 +271,26 @@ function TodayTab({ profile, refreshProfile }) {
   return (
     <div>
       {/* XP Toast */}
+
+    {(() => {
+        const msg = getProactiveMessage(profile);
+        if (!msg) return null;
+        return (
+          <AnimIn delay={0}>
+            <div style={{ padding: "16px 18px", borderRadius: "14px", marginBottom: "16px", background: `color-mix(in srgb, ${msg.color} 8%, var(--bg-card))`, border: `1.5px solid color-mix(in srgb, ${msg.color} 20%, transparent)` }}>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: "12px" }}>
+                <span style={{ fontSize: "20px", flexShrink: 0, marginTop: "2px" }}>{msg.emoji}</span>
+                <div>
+                  <p style={{ fontSize: "14px", fontWeight: 700, color: msg.color, marginBottom: "4px" }}>{msg.title}</p>
+                  <p style={{ fontFamily: "'Newsreader', serif", fontSize: "14px", color: "var(--text-secondary)", lineHeight: 1.6 }}>{msg.text}</p>
+                </div>
+              </div>
+            </div>
+          </AnimIn>
+        );
+      })()}
+
+    
       {xpToast && <div style={{ position: "fixed", bottom: 88, left: "50%", transform: "translateX(-50%)", zIndex: 200, padding: "10px 24px", borderRadius: "10px", background: "var(--accent)", fontSize: "13px", fontWeight: 700, color: "#fff", boxShadow: "var(--shadow-lg)", animation: "fadeSlideIn 0.3s ease" }}>+{xpToast} XP earned</div>}
 
       {/* Header */}
