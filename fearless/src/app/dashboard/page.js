@@ -4,10 +4,25 @@ import { useAuth } from "@/lib/auth-context";
 import { useTheme } from "@/lib/theme-context";
 import { useRouter } from "next/navigation";
 import { saveDiagnostic, addXp, saveJournalEntry, saveCoachMessage, getCoachMessages, getDayProgress, saveDayProgress } from "@/lib/firestore";
-import { getDayContent, PROFILES, getXpForNextLevel } from "@/lib/content";
-import { calculateCurrentDay, getPhaseFromDay } from "@/lib/day-tracker";
+import { getDayContent as getHardcodedContent, PROFILES, getXpForNextLevel } from "@/lib/content";import { calculateCurrentDay, getPhaseFromDay } from "@/lib/day-tracker";
 import { getProactiveMessage } from "@/lib/proactive-coach";
 import { IconFlame, IconZap, IconCheck, IconSend, IconChevron, IconSun, IconMoon, IconLogout, IconTarget, IconShield, IconChart, IconUser, IconPen, IconBook, typeIconMap, typeColorMap } from "@/components/icons";
+
+
+import { doc, getDoc } from "firebase/firestore";
+import { db } from "@/lib/firebase";
+
+async function getDayContentFromDB(profile, dayNumber) {
+  try {
+    const snap = await getDoc(doc(db, "content", `day_${dayNumber}`));
+    if (snap.exists()) {
+      return snap.data();
+    }
+  } catch (e) {
+    console.log("Firestore content not available, using fallback");
+  }
+  return getHardcodedContent(profile, dayNumber);
+}
 
 // ═══════════════════════════════════
 //  SHARED UI COMPONENTS
@@ -225,7 +240,12 @@ function TodayTab({ profile, refreshProfile }) {
   const { user } = useAuth();
   const day = profile.startDate ? calculateCurrentDay(profile.startDate) : (profile.currentDay || 1);
   const phase = getPhaseFromDay(day);
-  const content = getDayContent(profile.profile, day);
+  
+const [content, setContent] = useState(null);
+useEffect(() => {
+  getDayContentFromDB(profile.profile, day).then(c => setContent(c));
+}, [day]);
+  
   const p = PROFILES[profile.profile] || PROFILES.timidity;
   const pct = Math.min(((profile.xp || 0) / getXpForNextLevel(profile.level || 1)) * 100, 100);
 
@@ -303,8 +323,7 @@ function TodayTab({ profile, refreshProfile }) {
 
       {/* Proactive Coach Banner */}
       {(() => {
-        const msg = getProactiveMessage(profile);
-        if (!msg) return null;
+const msg = getProactiveMessage({ ...profile, currentDay: day });        if (!msg) return null;
         return (
           <AnimIn delay={0}>
             <div style={{ padding: "16px 18px", borderRadius: "14px", marginBottom: "16px", background: `color-mix(in srgb, ${msg.color} 8%, var(--bg-card))`, border: `1.5px solid color-mix(in srgb, ${msg.color} 20%, transparent)` }}>
@@ -449,7 +468,13 @@ function TodayTab({ profile, refreshProfile }) {
 function CoachTab({ profile }) {
   const { user } = useAuth();
   const day = profile.startDate ? calculateCurrentDay(profile.startDate) : (profile.currentDay || 1);
-  const content = getDayContent(profile.profile, day);
+
+  const [content, setContent] = useState(null);
+useEffect(() => {
+  getDayContentFromDB(profile.profile, day).then(c => setContent(c));
+}, [day]);
+
+  
   const [msgs, setMsgs] = useState([]);
   const [input, setInput] = useState("");
   const [typing, setTyping] = useState(false);
