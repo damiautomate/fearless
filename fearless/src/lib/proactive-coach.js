@@ -244,42 +244,29 @@ export function getProactiveMessage(profile) {
     };
   }
 
-  // ─── DEFAULT: Rotating motivational context ───
+  // ─── DEFAULT: Rotating by day + time slot (changes throughout the day) ───
+  const slot = new Date().getHours() < 12 ? 0 : new Date().getHours() < 17 ? 1 : 2;
   const defaults = [
-    {
-      emoji: "🎯",
-      color: "var(--accent-text)",
-      title: "Today matters",
-      text: `${name}, every day you show up is another data point your brain can't ignore. The old story gets quieter. The new evidence gets louder. Do today's prescription — even if it's just one item.`,
-    },
-    {
-      emoji: "💎",
-      color: "var(--teal)",
-      title: "Small steps compound",
-      text: `You're on Day ${currentDay}, ${name}. That means you've already done ${currentDay - 1} days of work that most people will never do. Don't compare yourself to where you want to be — compare yourself to where you started.`,
-    },
-    {
-      emoji: "🔑",
-      color: "var(--purple)",
-      title: "Consistency over intensity",
-      text: `${name}, the secret isn't doing something huge today. It's doing something small, every day, without stopping. A 10-minute prescription done consistently beats a 2-hour binge done once. Show up. That's enough.`,
-    },
-    {
-      emoji: "🌊",
-      color: "var(--teal)",
-      title: "Trust the process",
-      text: `Some days you'll feel like nothing is changing, ${name}. That's normal. Growth isn't linear — it's more like a staircase. You climb, then you plateau, then you climb again. The plateau isn't failure. It's consolidation.`,
-    },
-    {
-      emoji: "⚡",
-      color: "var(--orange)",
-      title: "Fear is your compass",
-      text: `If today's challenge makes you uncomfortable, ${name}, that's not a bug — it's a feature. Discomfort is the tax you pay for growth. And you've been paying it consistently. The returns are coming.`,
-    },
+    [
+      { emoji: "🎯", color: "var(--accent-text)", title: "Today matters", text: `${name}, every day you show up is another data point your brain can't ignore. The old story gets quieter. The new evidence gets louder.` },
+      { emoji: "💎", color: "var(--teal)", title: "Afternoon push", text: `Halfway through the day, ${name}. If you haven't started today's prescription yet, now is the time. Even one item counts.` },
+      { emoji: "🌙", color: "var(--purple)", title: "Evening reflection", text: `The day is winding down, ${name}. Did you do something today that scared you, even a little? If yes, that's a win. If not, there's still time.` },
+    ],
+    [
+      { emoji: "⚡", color: "var(--orange)", title: "Fear is your compass", text: `If today's challenge makes you uncomfortable, ${name}, that's not a bug — it's a feature. Discomfort is the tax you pay for growth.` },
+      { emoji: "🔑", color: "var(--teal)", title: "Small steps compound", text: `You're on Day ${currentDay}, ${name}. That means ${currentDay - 1} days of work most people will never do. Don't compare to where you want to be — compare to where you started.` },
+      { emoji: "🌊", color: "var(--purple)", title: "Trust the process", text: `Some days feel like nothing is changing, ${name}. Growth isn't linear — you climb, plateau, then climb again. The plateau isn't failure. It's consolidation.` },
+    ],
+    [
+      { emoji: "🎯", color: "var(--accent-text)", title: "Consistency over intensity", text: `${name}, a 10-minute prescription done consistently beats a 2-hour binge done once. Show up. That's enough.` },
+      { emoji: "💪", color: "var(--orange)", title: "You're stronger than you think", text: `${name}, look at your streak. Look at your level. That's not luck — that's you showing up when it was hard. Keep going.` },
+      { emoji: "✨", color: "var(--purple)", title: "Progress is quiet", text: `The loudest changes happen silently, ${name}. One day you'll react differently to something that used to paralyze you — and you'll realize the program worked.` },
+    ],
   ];
 
-  const idx = currentDay % defaults.length;
-  return { type: "default", action: null, ...defaults[idx] };
+  const row = currentDay % defaults.length;
+  const d = defaults[row][slot];
+  return { type: "default", action: null, ...d };
 }
 
 // ─── COACH CONTEXT BUILDER ───
