@@ -3,7 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { useTheme } from "@/lib/theme-context";
 import { useRouter } from "next/navigation";
-import { saveDiagnostic, addXp, saveJournalEntry, saveCoachMessage, getCoachMessages, getDayProgress, saveDayProgress } from "@/lib/firestore";
+import { saveDiagnostic, addXp, updateStreak, saveJournalEntry, saveCoachMessage, getCoachMessages, getDayProgress, saveDayProgress } from "@/lib/firestore";
 import { getDayContent as getHardcodedContent, PROFILES, getXpForNextLevel } from "@/lib/content";
 import { calculateCurrentDay, getPhaseFromDay } from "@/lib/day-tracker";
 import { getProactiveMessage } from "@/lib/proactive-coach";
@@ -64,27 +64,28 @@ const inputStyle = {
 function getGreeting(name, day, streak) {
   const hour = new Date().getHours();
   const timeGreet = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
-  const greetings = [
-    `${timeGreet}, ${name}`,
-    `You showed up again, ${name}`,
-    `${name}, let's make today count`,
-    `Ready for Day ${day}?`,
-    `${name}, your future self will thank you`,
-    `The brave version of you is here, ${name}`,
-    `${timeGreet} — Day ${day} awaits`,
-    `${name}, consistency is your superpower`,
-    `Still here, still growing, ${name}`,
-    `${name}, courage looks like this`,
-  ];
-  if (streak >= 14) return `${name}, ${streak} days straight. Unstoppable.`;
-  if (streak >= 7) return `${streak}-day streak, ${name}. You're on fire.`;
-  if (streak === 0 && day > 1) return `Welcome back, ${name}. Today is a fresh start.`;
+  const slot = hour < 10 ? 0 : hour < 13 ? 1 : hour < 17 ? 2 : hour < 21 ? 3 : 4;
+
+  // Milestone greetings (always show)
   if (day === 1) return `Welcome, ${name}. Your transformation starts now.`;
   if (day === 7) return `One week down, ${name}. Most people quit by now.`;
   if (day === 14) return `Phase 1 complete, ${name}. You're not the same person.`;
   if (day === 30) return `One month, ${name}. Let that sink in.`;
   if (day === 84) return `Day 84, ${name}. You did it.`;
-  return greetings[day % greetings.length];
+
+  // Streak-specific (varies by time)
+  if (streak >= 14) return [`${name}, ${streak} days straight. Unstoppable.`, `${streak}-day streak. ${name}, you're built different.`, `${timeGreet}, ${name}. ${streak} days and counting.`][slot % 3];
+  if (streak >= 7) return [`${streak}-day streak, ${name}. You're on fire.`, `${timeGreet}. ${streak} days strong, ${name}.`, `${name}, ${streak} days. Your future self is watching.`][slot % 3];
+  if (streak === 0 && day > 1) return [`Welcome back, ${name}. Today is a fresh start.`, `${name}, yesterday is done. Today is yours.`, `${timeGreet}, ${name}. Every comeback starts with one day.`][slot % 3];
+
+  // Rotating by day + time slot (changes throughout the day)
+  const pool = [
+    [`${timeGreet}, ${name}`, `Ready for Day ${day}?`, `${name}, let's make today count`, `Still here, still growing, ${name}`, `The brave version of you showed up, ${name}`],
+    [`You showed up again, ${name}`, `${name}, your future self will thank you`, `Day ${day}. ${name}, you know the drill.`, `${timeGreet} — Day ${day} awaits`, `${name}, consistency is your superpower`],
+    [`${name}, courage looks like this`, `Day ${day}. One step at a time, ${name}.`, `${name}, the work is working.`, `${timeGreet}, ${name}. Let's go.`, `${name}, show today who's in charge`],
+  ];
+  const row = day % pool.length;
+  return pool[row][slot % pool[row].length];
 }
 
 // ═══════════════════════════════════
@@ -245,6 +246,29 @@ function TodayTab({ profile, refreshProfile }) {
     getDayContentFromDB(profile.profile, day).then(c => setContent(c));
   }, [day]);
 
+  // Update streak and day on each visit
+  useEffect(() => {
+    async function checkStreak() {
+      try {
+        const lastDay = profile.lastActiveDay || 0;
+        if (day !== lastDay) {
+          const yesterday = day - 1;
+          let completed = false;
+          if (yesterday >= 1) {
+            const yProg = await getDayProgress(user.uid, yesterday);
+            completed = yProg && (yProg.completedItems?.length > 0 || yProg.challengeDone || yProg.journalDone);
+          }
+          if (day === 1) completed = true;
+          await updateStreak(user.uid, completed);
+          const { doc: fdoc, updateDoc } = await import("firebase/firestore");
+          await updateDoc(fdoc(db, "users", user.uid), { lastActiveDay: day, currentDay: day, phase: getPhaseFromDay(day) });
+          refreshProfile();
+        }
+      } catch (e) { console.log("Streak check error", e); }
+    }
+    if (user) checkStreak();
+  }, [user, day]);
+
   // ─── Persistent completion state ───
   const [completedItems, setCompletedItems] = useState({});
   const [challengeDone, setCd] = useState(false);
@@ -319,7 +343,7 @@ function TodayTab({ profile, refreshProfile }) {
 
       {/* Proactive Coach Banner */}
       {(() => {
-        const msg = getProactiveMessage(profile);
+        const msg = getProactiveMessage({ ...profile, currentDay: day, _hour: new Date().getHours() });
         if (!msg) return null;
         return (
           <AnimIn delay={0}>
