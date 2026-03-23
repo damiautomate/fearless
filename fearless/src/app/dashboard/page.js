@@ -853,14 +853,29 @@ function NotesTab({ profile }) {
 // ═══════════════════════════════════
 //  SETTINGS TAB
 // ═══════════════════════════════════
-function SettingsTab({ profile }) {
+function SettingsTab({ profile, refreshProfile }) {
   const { user, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const router = useRouter();
   const p = PROFILES[profile.profile] || PROFILES.timidity;
   const day = profile.startDate ? calculateCurrentDay(profile.startDate) : (profile.currentDay || 1);
+  const [phone, setPhone] = useState(profile.phone || "");
+  const [phoneSaved, setPhoneSaved] = useState(!!profile.phone);
+  const [phoneSaving, setPhoneSaving] = useState(false);
 
   const handleLogout = async () => { await logout(); router.push("/auth/login"); };
+
+  const savePhone = async () => {
+    if (!phone.trim()) return;
+    setPhoneSaving(true);
+    try {
+      const { doc: fdoc, updateDoc } = await import("firebase/firestore");
+      await updateDoc(fdoc(db, "users", user.uid), { phone: phone.trim() });
+      setPhoneSaved(true);
+      refreshProfile();
+    } catch (e) { console.log("Failed to save phone", e); }
+    setPhoneSaving(false);
+  };
 
   function Toggle({ on, onToggle }) {
     return <div onClick={onToggle} style={{ width: "44px", height: "26px", borderRadius: "13px", background: on ? "var(--accent)" : "var(--border)", cursor: "pointer", position: "relative", transition: "0.3s", flexShrink: 0 }}><div style={{ width: "20px", height: "20px", borderRadius: "50%", background: "#fff", position: "absolute", top: "3px", left: on ? "21px" : "3px", transition: "0.3s", boxShadow: "0 1px 3px rgba(0,0,0,0.2)" }} /></div>;
@@ -906,10 +921,54 @@ function SettingsTab({ profile }) {
           <Row label="Member Since" desc={profile.createdAt ? (profile.createdAt.toDate ? profile.createdAt.toDate().toLocaleDateString() : new Date(profile.createdAt.seconds * 1000).toLocaleDateString()) : "—"} />
         </Card>
       </AnimIn>
-      <AnimIn delay={240}>
+      <AnimIn delay={220}>
+        <Card style={{ marginBottom: "14px", borderColor: phoneSaved ? "var(--green)" : undefined }}>
+          <Label text="WhatsApp Coach" color="var(--green)" />
+          <p style={{ fontFamily: "'Newsreader', serif", fontSize: "13px", color: "var(--text-tertiary)", marginBottom: "12px", lineHeight: 1.5 }}>
+            Link your WhatsApp to chat with your Fearless Coach anytime — even outside the app. Your coach will know your full journey.
+          </p>
+          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+            <input
+              value={phone}
+              onChange={e => { setPhone(e.target.value); setPhoneSaved(false); }}
+              placeholder="+234 XXX XXX XXXX"
+              style={{
+                flex: 1, fontSize: "14px", padding: "10px 14px", borderRadius: "10px",
+                border: `1.5px solid ${phoneSaved ? "var(--green)" : "var(--border)"}`,
+                background: "var(--bg-secondary)", color: "var(--text-primary)", outline: "none",
+                fontFamily: "'JetBrains Mono', monospace",
+              }}
+            />
+            {!phoneSaved && (
+              <button
+                onClick={savePhone}
+                disabled={!phone.trim() || phoneSaving}
+                style={{
+                  fontSize: "12px", fontWeight: 600, padding: "10px 18px", borderRadius: "10px",
+                  border: "none", cursor: "pointer",
+                  background: phone.trim() ? "var(--green)" : "var(--border)",
+                  color: phone.trim() ? "#fff" : "var(--text-muted)",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {phoneSaving ? "Saving..." : "Save"}
+              </button>
+            )}
+          </div>
+          {phoneSaved && (
+            <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "11px", color: "var(--green)", marginTop: "8px" }}>
+              ✓ Linked — text the Fearless Coach on WhatsApp anytime
+            </p>
+          )}
+          <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "var(--text-muted)", marginTop: "8px" }}>
+            Include country code (e.g. +234 for Nigeria, +1 for US)
+          </p>
+        </Card>
+      </AnimIn>
+      <AnimIn delay={260}>
         <button onClick={handleLogout} style={{ width: "100%", fontSize: "14px", fontWeight: 600, padding: "14px", borderRadius: "12px", border: "1.5px solid var(--red)", background: "var(--red-soft)", color: "var(--red)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}><IconLogout size={16} /> Sign Out</button>
       </AnimIn>
-      <AnimIn delay={280}><p style={{ textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "var(--text-muted)", marginTop: "24px" }}>Fearless v1.0</p></AnimIn>
+      <AnimIn delay={300}><p style={{ textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "var(--text-muted)", marginTop: "24px" }}>Fearless v1.0</p></AnimIn>
     </div>
   );
 }
